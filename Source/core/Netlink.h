@@ -36,7 +36,8 @@ namespace WPEFramework {
 namespace Core {
 
     class EXTERNAL Netlink {
-    private:
+//    private:
+    public:
         template <typename HEADER>
         class Parameters {
         public:

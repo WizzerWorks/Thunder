@@ -433,7 +433,8 @@ namespace Core {
         if (stime(&value) != 0) {
   #endif
 #else
-        if (stime(&value) != 0) {
+	//if (stime(&value) != 0) {
+	if (ctime(&value) != 0) {
 #endif
             TRACE_L1("Failed to set system time [%d]", errno);
         } else {

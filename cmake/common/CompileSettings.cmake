@@ -100,8 +100,8 @@ endif()
 # Compiler specific options
 #
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "Compiling with Clang")
-    target_compile_options(CompileSettings INTERFACE -Weverything)
+#    message(FATAL_ERROR "Compiling with Clang")
+    target_compile_options(CompileSettings INTERFACE -Weverything -Wno-c++98-compat -Wno-gnu-zero-variadic-macro-arguments -Wno-used-but-marked-unused -Wno-sign-conversion -Wno-c++98-compat-extra-semi -Wno-c++98-compat-pedantic -Wno-extra-semi -Wno-unused-parameter -Wno-reserved-id-macro)
 elseif(${CMAKE_COMPILER_IS_GNUCXX})
     message(STATUS "Compiling with GCC")
     target_compile_options(CompileSettings INTERFACE -Wall)

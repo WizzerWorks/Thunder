@@ -208,6 +208,17 @@ void* memrcpy(void* _Dst, const void* _Src, size_t _MaxCount)
 
 extern "C" {
 
+//#include <execinfo.h>
+//#ifdef ALTICAST_ANDROID
+// Todo: backtrace_symbols is normally defined in execinfo.h. Unfortunately,
+// this is not part of the Android NDK.
+char **backtrace_symbols(void *const *buffer, int size)
+{
+    // Todo: Need to do something other than return nullptr.
+    return nullptr;
+}
+//#endif
+
 void DumpCallStack(const ThreadId threadId, std::list<string>& stackList)
 {
 #ifdef __DEBUG__

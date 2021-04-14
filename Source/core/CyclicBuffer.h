@@ -278,12 +278,12 @@ namespace Core {
 
 #endif
 
-            std::atomic<uint32_t> _head;
-            std::atomic<uint32_t> _tail;
+            volatile std::atomic<uint32_t> _head;
+            volatile std::atomic<uint32_t> _tail;
             uint32_t _tailIndexMask; // Bitmask of index in buffer, rest is round count.
             uint32_t _roundCountModulo; // Value with which to mod round count to prevent overflow.
-            std::atomic<uint32_t> _agents;
-            std::atomic<uint16_t> _state;
+            volatile std::atomic<uint32_t> _agents;
+            volatile std::atomic<uint16_t> _state;
             uint32_t _size;
             uint32_t _lockPID;
 
@@ -291,9 +291,9 @@ namespace Core {
             uint32_t _reserved; // How much reserved in total.
             uint32_t _reservedWritten; // How much has already been written.
 #ifndef __WINDOWS__
-            std::atomic<pid_t> _reservedPID; // What process made the reservation.
+            volatile std::atomic<pid_t> _reservedPID; // What process made the reservation.
 #else
-            std::atomic<DWORD> _reservedPID; // What process made the reservation.
+            volatile std::atomic<DWORD> _reservedPID; // What process made the reservation.
 #endif
 
         } * _administration;
