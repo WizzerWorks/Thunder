@@ -1349,12 +1349,16 @@ namespace Web
 
             if ((query == string::npos) && (fragment == string::npos)) {
                 _current->Path = buffer;
+                _current->Query.Clear();
+                _current->Fragment.Clear();
             } else if (fragment == string::npos) {
                 _current->Path = buffer.substr(0, query);
                 _current->Query = buffer.substr(query + 1, buffer.size() - query);
+                _current->Fragment.Clear();
             } else if (query == string::npos) {
                 _current->Path = buffer.substr(0, fragment);
                 _current->Fragment = buffer.substr(fragment + 1, buffer.size() - fragment);
+                _current->Query.Clear();
             } else if (query < fragment) {
                 _current->Path = buffer.substr(0, query);
                 _current->Query = buffer.substr(query + 1, buffer.size() - query);
@@ -1637,6 +1641,8 @@ namespace Web
         }
         case PAIR_VALUE: {
             _state = PAIR_KEY;
+            _parser.CollectWord(':', Parser::UPPERCASE);
+            break;
         }
         case PAIR_KEY: {
             _parser.CollectWord(':', Parser::UPPERCASE);
@@ -1793,6 +1799,7 @@ namespace Web
                     // Dispatch the Response
                     Deserialized(*_current);
                     _current = nullptr;
+                    _parser.Reset();
                     _state = VERSION;
                 }
                 break;
@@ -1998,6 +2005,7 @@ namespace Web
             // Dispatch the Response
             Deserialized(*_current);
             _current = nullptr;
+            _parser.Reset();
             _state = VERSION;
         }
     }
@@ -2029,6 +2037,8 @@ namespace Web
         }
         case PAIR_VALUE: {
             _state = PAIR_KEY;
+            _parser.CollectWord(':', Parser::UPPERCASE);
+            break;
         }
         case PAIR_KEY: {
             _parser.CollectWord(':', Parser::UPPERCASE);
@@ -2048,6 +2058,7 @@ namespace Web
             // Dispatch the Response
             Deserialized(*_current);
             _current = nullptr;
+            _parser.Reset();
             _state = VERSION;
             break;
         }
