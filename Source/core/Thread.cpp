@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,12 @@
 namespace WPEFramework {
 namespace Core {
 
-    /* static */ uint32_t Thread::_defaultStackSize = 0;
+    //Definitions of static members
+    uint32_t Thread::_defaultStackSize = 0;
+    #ifdef __CORE_EXCEPTION_CATCHING__
+    Thread::IExceptionCallback* Thread::_exceptionHandler = nullptr;
+    #endif
+
 
     Thread::Thread(const uint32_t stackSize, const TCHAR* threadName)
         : m_enumState(BLOCKED)
@@ -76,17 +81,18 @@ namespace Core {
         ASSERT(err == 0);
 
         if ((err == 0) && (stackSize != 0)) {
-            size_t new_size = (stackSize < PTHREAD_STACK_MIN) ? PTHREAD_STACK_MIN : stackSize;
+            size_t new_size = (stackSize < static_cast<uint32_t>(PTHREAD_STACK_MIN)) ? PTHREAD_STACK_MIN : stackSize;
             err = pthread_attr_setstacksize(&attr, new_size);
             ASSERT(err == 0);
         }
 
         // If there is no thread, the "new" thread can also not free the destructor,
         // then it is up to us.
-        if ((err != 0) || (pthread_create(&m_hThreadInstance, &attr, (void* (*)(void*))Thread::StartThread, this) == -1))
+        if ((err != 0) || (pthread_create(&m_hThreadInstance, &attr, (void* (*)(void*))Thread::StartThread, this) != 0))
 #endif
         {
             // Creation failed, O.K. We will signal the inactive state our selves.
+            m_enumState = FAILED;
             m_sigExit.SetEvent();
         }
 
@@ -94,7 +100,7 @@ namespace Core {
         err = pthread_attr_destroy(&attr);
         ASSERT(err == 0);
 
-        m_ThreadId = (uint32_t)(size_t)m_hThreadInstance;
+        m_ThreadId = m_hThreadInstance;
 #endif
 
         if (threadName != nullptr) {
@@ -122,9 +128,9 @@ namespace Core {
     ::ThreadId Thread::ThreadId()
     {
 #ifdef __WINDOWS__
-        #pragma warning (disable:4312)
-        return (reinterpret_cast<::ThreadId>(::GetCurrentThreadId()));
-        #pragma warning (default:4312)
+PUSH_WARNING(DISABLE_WARNING_CONVERSION_TO_GREATERSIZE)
+        return (::GetCurrentThreadId());
+POP_WARNING()
 #else
         return static_cast<::ThreadId>(pthread_self());
 #endif
@@ -144,6 +150,7 @@ namespace Core {
         sigset_t mask;
         sigemptyset(&mask);
         sigaddset(&mask, SIGTERM);
+        sigaddset(&mask, SIGPIPE);
         pthread_sigmask(SIG_BLOCK, &mask, nullptr);
 #endif
 
@@ -169,7 +176,23 @@ namespace Core {
                     // O.K. befor using the state, lock it.
                     adminLock.Unlock();
 
-                    delayed = cClassPointer->Worker();
+                    #ifdef __CORE_EXCEPTION_CATCHING__
+                    try {
+                        delayed = cClassPointer->Worker();
+                    }
+                    catch(const std::exception& type) {
+                        if(_exceptionHandler != nullptr){
+                            _exceptionHandler->Exception(type.what());
+                        }
+                    }
+                    catch(...) {
+                        if(_exceptionHandler != nullptr){
+                            _exceptionHandler->Exception(_T("Unknown"));
+                        }
+                    }
+                    #else
+                        delayed = cClassPointer->Worker();
+                    #endif
 
                     // Change the state, we are done with it.
                     adminLock.Lock();
@@ -238,8 +261,10 @@ namespace Core {
         m_sigExit.Lock(Core::infinite);
 
 #ifdef __POSIX__
-        void* l_Dummy;
-        ::pthread_join(m_hThreadInstance, &l_Dummy);
+        if (!IsFailed()) {
+            void* l_Dummy;
+            ::pthread_join(m_hThreadInstance, &l_Dummy);
+        }
 #endif
     }
 
@@ -322,7 +347,7 @@ namespace Core {
 
     bool Thread::Wait(const unsigned int enumState, unsigned int nTime) const
     {
-        return (m_enumState.WaitState(enumState, nTime));
+        return (IsFailed() ? false : m_enumState.WaitState(enumState, nTime));
     }
 
     Thread::thread_state Thread::State() const
@@ -358,6 +383,9 @@ namespace Core {
         case STOPPED: // The STOPPED state is the end,
             // No changes possible anymore.
             blOK = (enumNewState == STOPPED);
+            break;
+        case FAILED: // There's no thread, so nothing we can do!
+            blOK = false;
             break;
         }
 
@@ -410,13 +438,26 @@ namespace Core {
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
 #endif // __DEBUG__
+#else
+        int rc = pthread_setname_np(m_hThreadInstance, threadName);
+        if (rc == ERANGE) {
+            // name too long - max 16 chars allowed
+            char truncName[16];
+            strncpy(truncName, threadName, sizeof(truncName));
+            truncName[15] = '\0';
+            pthread_setname_np(m_hThreadInstance, truncName);
+        }
 #endif // __WINDOWS__
     }
 
 #ifdef __DEBUG__
     int Thread::GetCallstack(void** buffer, int size)
     {
+#if defined(THUNDER_BACKTRACE)
         return GetCallStack(m_hThreadInstance, buffer, size);
+#else
+        return(0);
+#endif
     }
 #endif // __DEBUG
 }

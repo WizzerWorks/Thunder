@@ -1,126 +1,18 @@
 # Thunder
 
-A C++ platform abstraction layer for generic functionality.
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) 
 
-### Thunder dependencies
-After the JsonGenerator.py and StubGenerator.py were modified to run with the python 3.5 version, some action might be required. When using buildroot or yocto, no action is necessary. Upon running these scripts manually or on Windows, make sure python 3.5 or higher is used, like so:
-```Shell
-$ python --version
-```
-You might also need to fulfill a requirement of the **jsonref** library, with the following line:
-```Shell
-$ pip install jsonref
-``` 
+![Linux Build](https://github.com/rdkcentral/Thunder/actions/workflows/Build%20Thunder%20on%20Linux.yml/badge.svg) ![Windows Build](https://github.com/rdkcentral/Thunder/actions/workflows/Build%20Thunder%20on%20Windows.yml/badge.svg) ![Unit Test](https://github.com/rdkcentral/Thunder/actions/workflows/Test%20Thunder.yml/badge.svg)
 
-### Thunder Options
-**Platforms:**
-* INTELCE
-* RPI
-* PC_UNIX
-* PC_WINDOWS
-* EOS
-* DAWN
-* Xi5
 
-**Thunder options:**
-*  -DCORE=ON ,Include the generics library.
-*  -DCRYPTALGO=ON ,Include the encyption algorithm library.
-*  -DPROTOCOLS=ON ,Include the protocols library.
-*  -DTRACING=ON ,Include the tracing library.
-*  -DPLUGINS=ON ,Include the plugin library.
-*  -DDEBUG=ON ,Enable debug build for Thunder.
-*  -DWCHAR_SUPPORT=ON ,Enable support for WCHAR in Thunder.
+Thunder (also known as WPEFramework) is an open-source plugin-based device abstraction layer, where business functionality can be implemented as plugins and applications can query and control those plugins. Using Thunder provides a consistent interface-driven development model for both plugins and client applications, with an RPC engine that is suited to both web-based and native apps.
 
-**Internal plugins**
-* [Controller](Source/WPEFramework/doc/ControllerPlugin.md)
+Designed from the ground up for embedded platforms and written in C++11, Thunder can be run on even the most low-power of devices (including ARM and MIPS-based platforms).
 
-**Linux (Desktop) Build**
+# Documentation
 
-These instructions should work on Raspberry PI or any Linux distro. 
+All documentation and build instructions for Thunder can be found here: [Documentation](https://rdkcentral.github.io/Thunder/)
 
-Setup root build and install
+# Copyright and License
 
-```shell
-export THUNDER_ROOT=$HOME/thunder
-export THUNDER_INSTALL_DIR=${THUNDER_ROOT}/install
-mkdir -p ${THUNDER_INSTALL_DIR}
-```
-
-Clone source
-
-```shell
-cd ${THUNDER_ROOT}
-git clone https://github.com/rdkcentral/Thunder.git
-```
-
-Build and install Tools
-
-```shell
-cd ${THUNDER_ROOT}/Thunder/Tools
-mkdir build
-
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=${THUNDER_INSTALL_DIR} \
-      -DGENERIC_CMAKE_MODULE_PATH=${THUNDER_INSTALL_DIR}/include/WPEFramework/cmake/modules ..
-      
-make; make install
-```
-
-Build and install Thunder
-```shell
-cd ${THUNDER_ROOT}/Thunder
-mkdir build
-
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=${THUNDER_INSTALL_DIR} \
-      -DCMAKE_MODULE_PATH=${THUNDER_INSTALL_DIR}/include/WPEFramework/cmake/modules \
-      -DBUILD_TYPE=Debug -DBINDING=127.0.0.1 -DVIRTUALINPUT=on ..
-      
-make; make install
-```
-
-**ThunderInterfaces**
-
-```shell
-cd ${THUNDER_ROOT}
-git clone https://github.com/rdkcentral/ThunderInterfaces
-
-cd ${THUNDER_ROOT}/ThunderInterfaces
-mkdir build
-
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=${THUNDER_INSTALL_DIR}  \
-      -DBUILD_TYPE=Debug\
-      -DCMAKE_MODULE_PATH=${THUNDER_INSTALL_DIR}/include/WPEFramework/cmake/modules ..
-make; make install
-```
-
-**WINDOWS Build, using Visual Studio 2019**
-
-The default solution is setup in such away that it can run and load 
-the Thunder and Thunder Nano Services (capable of running in Windows)
-if both repositories are next to each other. So checkout Thunder on 
-disk and put the ThunderNanoServices next to it.
-
-e.g.
-C:\Users\Me\Thunder 
-C:\Users\Me\ThunderNanoServices
-
-Than to run, the config file is assuming that all is installed on W: 
-You can set this by mapping the artifacts directory created, to the 
-W drive. A typical use case would be:
-
-net use w: "\\localhost\c$\Users\Me\Thunder\artifacts"
-
-Before the first run make sure you creat a volatile and a peritent directory
-here mkdir w:\Temp and mkdir w:\Persistent.
-
-If you want to use the Thunder UI page, copy the ThunderUI\build\* to 
-W:\<build type>\Controller\UI
-
-Depending on the filesystem used by the windows OS, symbolic links are supported 
-or not. There is 1 Symbolic link in the Thuder repository (Thunder/Source/tools
--> "../Tools"). If this symbolic link does not exist, you will experience build 
-errors (error 2, GenrateProxyStub.py not found). 
-or create a copy of the Tools directory in Source/tools (xcopy /d ..\Tools tools)
-or create the symlink manually (mklink /D tools "..\Tools")
+Thunder is Copyright 2018 Metrological and licensed under the Apache License, Version 2.0. See the LICENSE and NOTICE files in the top level directory for further details.

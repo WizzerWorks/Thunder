@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@
 #include "Module.h"
 #include "Portability.h"
 #include "Time.h"
+#include "Library.h"
 
 #include <sstream>
 
@@ -30,12 +31,37 @@
 #include <time.h>
 #endif
 
+#define ROOT_META_DATA_1 RootMetaData_
+#define ROOT_META_DATA CONCAT_STRINGS(ROOT_META_DATA_1,MODULE_NAME)
+
 namespace WPEFramework {
 namespace Core {
-    namespace System {
 
-        extern "C" const char* MODULE_NAME;
-        extern "C" EXTERNAL uint32_t Reboot();
+    struct EXTERNAL IService {
+        struct EXTERNAL IMetadata {
+            virtual ~IMetadata() = default;
+
+            virtual const TCHAR* ServiceName() const = 0;
+            virtual const TCHAR* Module() const = 0;
+            virtual uint8_t Major() const = 0;
+            virtual uint8_t Minor() const = 0;
+            virtual uint8_t Patch() const = 0;
+        };
+
+        virtual ~IService() = default;
+
+        virtual void* Create(const Library& library, const uint32_t interfaceNumber) = 0;
+        virtual const IMetadata* Metadata() const = 0;
+    };
+
+    namespace System {
+        extern "C" EXTERNAL_EXPORT const WPEFramework::Core::IService::IMetadata * ROOT_META_DATA;
+
+        extern "C" EXTERNAL_EXPORT const char* MODULE_NAME;
+
+        extern "C" EXTERNAL_EXPORT uint32_t Reboot();
+        extern "C" EXTERNAL_EXPORT const char* ModuleBuildRef();
+        extern "C" EXTERNAL_EXPORT const IService::IMetadata* ModuleServiceMetadata();
     }
 
     class EXTERNAL SystemInfo {
@@ -48,9 +74,6 @@ namespace Core {
 
     public:
         string Id(const uint8_t RawDeviceId[], const uint8_t KeyLength);
-
-        // First byte of the RawDeviceId is the length of the DeviceId to follow.
-        const uint8_t* RawDeviceId() const;
 
         static bool GetEnvironment(const string& name, string& value);
         static bool SetEnvironment(const string& name, const TCHAR* value, const bool forced = true);
@@ -68,6 +91,7 @@ namespace Core {
         ~SystemInfo();
 
         void SetTime(const Time& time);
+        void SetTimeZone(const string& tz, const bool forcedupdate = true);
 
         inline const string& GetHostName() const
         {
@@ -123,12 +147,6 @@ namespace Core {
         {
             UpdateRealtimeInfo();
             return m_cpuloadavg;
-        }
-
-        inline uint64_t GetJiffies() const
-        {
-            UpdateCpuStats();
-            return m_jiffies;
         }
 
         class EXTERNAL MemorySnapshot {
@@ -198,130 +216,10 @@ namespace Core {
             return MemorySnapshot();
         }
 
-        /*
-        * Pentium cycle counter
-        */
-#if defined(__GNUC__) && defined(__i386__) && !defined(HAVE_TICK_COUNTER)
         inline uint64_t Ticks() const
         {
-            uint64_t ret;
-
-            __asm__ __volatile__("rdtsc"
-                                 : "=A"(ret));
-            /* no input, nothing else clobbered */
-            return ret;
+            return (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
         }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-/* Visual C++ -- thanks to Morten Nissov for his help with this */
-#if _MSC_VER >= 1200 && _M_IX86 >= 500 && !defined(HAVE_TICK_COUNTER)
-        inline uint64_t Ticks() const
-        {
-            LARGE_INTEGER retval;
-
-            __asm {
-                __asm __emit 0fh __asm __emit 031h /* hack for VC++ 5.0 */
-                mov retval.HighPart, edx
-                mov retval.LowPart, eax
-            }
-            return retval.QuadPart;
-        }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-/*----------------------------------------------------------------*/
-/*
-        * X86-64 cycle counter
-        */
-#if defined(__GNUC__) && defined(__x86_64__) && !defined(HAVE_TICK_COUNTER)
-        inline uint64_t Ticks() const
-        {
-            uint32_t a, d;
-            asm volatile("rdtsc"
-                         : "=a"(a), "=d"(d));
-            return ((uint64_t)a) | (((uint64_t)d) << 32);
-        }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-/* gcc */
-#if defined(__GNUC__) && defined(__ia64__) && !defined(HAVE_TICK_COUNTER)
-
-        inline uint64_t Ticks() const
-        {
-            ticks ret;
-
-            __asm__ __volatile__("mov %0=ar.itc"
-                                 : "=r"(ret));
-            return ret;
-        }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-/* Microsoft Visual C++ */
-#if defined(_MSC_VER) && defined(_M_IA64) && !defined(HAVE_TICK_COUNTER)
-        typedef unsigned __int64 ticks;
-
-#ifdef __cplusplus
-        extern "C"
-#endif
-            uint64_t
-            __getReg(int whichReg);
-#pragma intrinsic(__getReg)
-
-        inline uint64_t Ticks() const
-        {
-            volatile uint64_t temp;
-            temp = __getReg(3116);
-            return temp;
-        }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-#if defined(__GNUC__) && !defined(HAVE_TICK_COUNTER)
-        inline uint64_t Ticks() const
-        {
-            struct timespec mytime;
-
-            clock_gettime(CLOCK_MONOTONIC, &mytime);
-
-            return (static_cast<uint64_t>(mytime.tv_nsec) + (static_cast<uint64_t>(mytime.tv_sec) * 1000000000UL));
-        }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-#if defined(_MSC_VER) && !defined(HAVE_TICK_COUNTER)
-        inline uint64_t Ticks() const
-        {
-            SYSTEMTIME systemTime;
-            FILETIME fileTime;
-
-            ::GetSystemTime(&systemTime);
-
-            // Contains a 64-bit value representing the number of 100-nanosecond intervals since January 1, 1601 (UTC).
-            ::SystemTimeToFileTime(&systemTime, &fileTime);
-            _ULARGE_INTEGER result;
-
-            result.LowPart = fileTime.dwLowDateTime;
-            result.HighPart = fileTime.dwHighDateTime;
-
-            // Return the time in MicroSeconds...
-            return (result.QuadPart);
-        }
-
-#define HAVE_TICK_COUNTER
-#endif
-
-#if !defined(HAVE_TICK_COUNTER)
-#error "Come up with an implementation of a High Resolution tick counter for the compiler you are using."
-#endif
 
     public:
         const string Architecture() const;
@@ -339,7 +237,6 @@ namespace Core {
         mutable uint64_t m_freeswap;
         mutable uint64_t m_cpuload;
         mutable uint64_t m_cpuloadavg[3];
-        mutable uint64_t m_jiffies;
         mutable time_t m_lastUpdateCpuStats;
 
         void UpdateCpuStats() const;
@@ -356,22 +253,29 @@ namespace Core {
 } // namespace Core
 } // namespace WPEFramework
 
-#define SOLUTIONS_GENERICS_SYSTEM_PREPROCESSOR_1(parameter) #parameter
-#define SOLUTIONS_GENERICS_SYSTEM_PREPROCESSOR_2(parameter) SOLUTIONS_GENERICS_SYSTEM_PREPROCESSOR_1(parameter)
+#define MODULE_NAME_DECLARATION(buildref)                                                                     \
+    extern "C" {                                                                                              \
+    namespace WPEFramework {                                                                                  \
+        namespace Core {                                                                                      \
+            namespace System {                                                                                \
+                EXTERNAL_EXPORT const WPEFramework::Core::IService::IMetadata* ROOT_META_DATA = nullptr;      \
+                EXTERNAL_EXPORT const char* MODULE_NAME = DEFINE_STRING(MODULE_NAME);                         \
+                EXTERNAL_EXPORT const char* ModuleBuildRef() { return (DEFINE_STRING(buildref)); }            \
+                EXTERNAL_EXPORT const IService::IMetadata* ModuleServiceMetadata() {return(ROOT_META_DATA);}  \
+            }                                                                                                 \
+        }                                                                                                     \
+    }                                                                                                         \
+    } // extern "C" Core::System
 
-#define MODULE_BUILDREF MODULE_NAME##Version
-
-#define MODULE_NAME_DECLARATION(buildref)                                                                              \
-    extern "C" {                                                                                                       \
-    namespace WPEFramework {                                                                                           \
-        namespace Core {                                                                                               \
-            namespace System {                                                                                         \
-                const char* MODULE_NAME = SOLUTIONS_GENERICS_SYSTEM_PREPROCESSOR_2(MODULE_NAME);              \
-                const char* ModuleName() { return (MODULE_NAME); }                                            \
-                const char* ModuleBuildRef() { return (SOLUTIONS_GENERICS_SYSTEM_PREPROCESSOR_2(buildref)); } \
-            }                                                                                                          \
-        }                                                                                                              \
-    }                                                                                                                  \
+#define MODULE_NAME_ARCHIVE_DECLARATION                                                             \
+    extern "C" {                                                                                    \
+    namespace WPEFramework {                                                                        \
+        namespace Core {                                                                            \
+            namespace System {                                                                      \
+                EXTERNAL_EXPORT const char* MODULE_NAME = DEFINE_STRING(MODULE_NAME);               \
+            }                                                                                       \
+        }                                                                                           \
+    }                                                                                               \
     } // extern "C" Core::System
 
 #endif // __SYSTEMINFO_H

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ TEST(test_synchronize, synchronize_test)
     syncObject2.Evaluate();
 
     syncObject3.Load(syncObject1);
-    EXPECT_EQ(syncObject3.Aquire(unsigned(5)), unsigned(11));
+    EXPECT_EQ(syncObject3.Acquire(unsigned(5)), unsigned(11));
     syncObject3.Load(syncObject1);
     EXPECT_TRUE(syncObject3.Evaluate<string>(MESSAGE));
 

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,7 @@
  * limitations under the License.
  */
 
-#ifndef __WEBBRIDGESUPPORT_CONFIGURATION_H
-#define __WEBBRIDGESUPPORT_CONFIGURATION_H
+#pragma once
 
 #include "Module.h"
 #include "Config.h"
@@ -28,7 +27,173 @@
 
 namespace WPEFramework {
 namespace Plugin {
+    /**
+     * IMPORTANT: If updating this class to add/remove/modify configuration options, ensure
+     * the documentation in docs/plugin/config.md is updated to reflect the changes!
+    */
     class EXTERNAL Config : public Core::JSON::Container {
+    public:
+        class EXTERNAL RootConfig : public Core::JSON::Container {
+        private:
+            class RootObject : public Core::JSON::Container {
+            private:
+                RootObject(const RootObject&) = delete;
+                RootObject& operator=(const RootObject&) = delete;
+
+            public:
+                RootObject()
+                    : Config(false)
+                {
+                    Add(_T("root"), &Config);
+                }
+                ~RootObject() override = default;
+
+            public:
+                Core::JSON::String Config;
+            };
+
+        public:
+
+            enum class ModeType {
+                OFF,
+                LOCAL,
+                CONTAINER,
+                DISTRIBUTED
+            };
+
+            RootConfig()
+                : Core::JSON::Container()
+                , Locator()
+                , User()
+                , Group()
+                , Threads(1)
+                , Priority(0)
+                , OutOfProcess(false)
+                , Mode(ModeType::LOCAL)
+                , RemoteAddress()
+                , Configuration(false)
+            {
+                Add(_T("locator"), &Locator);
+                Add(_T("user"), &User);
+                Add(_T("group"), &Group);
+                Add(_T("threads"), &Threads);
+                Add(_T("priority"), &Priority);
+                Add(_T("outofprocess"), &OutOfProcess);
+                Add(_T("mode"), &Mode);
+                Add(_T("remoteaddress"), &RemoteAddress);
+                Add(_T("configuration"), &Configuration);
+            }
+            RootConfig(const PluginHost::IShell* info)
+                : Core::JSON::Container()
+                , Locator()
+                , User()
+                , Group()
+                , Threads()
+                , Priority(0)
+                , OutOfProcess(false)
+                , Mode(ModeType::LOCAL)
+                , RemoteAddress()
+                , Configuration(false)
+            {
+                Add(_T("locator"), &Locator);
+                Add(_T("user"), &User);
+                Add(_T("group"), &Group);
+                Add(_T("threads"), &Threads);
+                Add(_T("priority"), &Priority);
+                Add(_T("outofprocess"), &OutOfProcess);
+                Add(_T("mode"), &Mode);
+                Add(_T("remoteaddress"), &RemoteAddress);
+                Add(_T("configuration"), &Configuration);
+
+                RootObject config;
+                Core::OptionalType<Core::JSON::Error> error;
+                config.FromString(info->ConfigLine(), error);
+                if (error.IsSet() == true) {
+                    SYSLOG(Logging::ParsingError, (_T("Parsing failed with %s"), ErrorDisplayMessage(error.Value()).c_str()));
+                }
+
+                if (config.Config.IsSet() == true) {
+                    // Yip we want to go out-of-process
+                    RootConfig settings;
+                    Core::OptionalType<Core::JSON::Error> error;
+                    settings.FromString(config.Config.Value(), error);
+                    if (error.IsSet() == true) {
+                        SYSLOG(Logging::ParsingError, (_T("Parsing failed with %s"), ErrorDisplayMessage(error.Value()).c_str()));
+                    }
+                    *this = settings;
+
+                    if (Locator.Value().empty() == true) {
+                        Locator = info->Locator();
+                    }
+                }
+            }
+            RootConfig(const RootConfig& copy)
+                : Core::JSON::Container()
+                , Locator(copy.Locator)
+                , User(copy.User)
+                , Group(copy.Group)
+                , Threads(copy.Threads)
+                , Priority(copy.Priority)
+                , OutOfProcess(true)
+                , Mode(copy.Mode)
+                , RemoteAddress(copy.RemoteAddress)
+                , Configuration(copy.Configuration)
+            {
+                Add(_T("locator"), &Locator);
+                Add(_T("user"), &User);
+                Add(_T("group"), &Group);
+                Add(_T("threads"), &Threads);
+                Add(_T("priority"), &Priority);
+                Add(_T("outofprocess"), &OutOfProcess);
+                Add(_T("mode"), &Mode);
+                Add(_T("remoteaddress"), &RemoteAddress);
+                Add(_T("configuration"), &Configuration);
+            }
+            ~RootConfig() override = default;
+
+            RootConfig& operator=(const RootConfig& RHS)
+            {
+                Locator = RHS.Locator;
+                User = RHS.User;
+                Group = RHS.Group;
+                Threads = RHS.Threads;
+                Priority = RHS.Priority;
+                OutOfProcess = RHS.OutOfProcess;
+                Mode = RHS.Mode;
+                RemoteAddress = RHS.RemoteAddress;
+                Configuration = RHS.Configuration;
+
+                return (*this);
+            }
+
+            RPC::Object::HostType HostType() const {
+                RPC::Object::HostType result = RPC::Object::HostType::LOCAL;
+                switch( Mode.Value() ) {
+                    case ModeType::CONTAINER :
+                        result = RPC::Object::HostType::CONTAINER;
+                        break;
+                    case ModeType::DISTRIBUTED:
+                        result = RPC::Object::HostType::DISTRIBUTED;
+                        break;
+                    default:
+                        result = RPC::Object::HostType::LOCAL;
+                        break;
+                }
+                return result;
+            }
+
+        public:
+            Core::JSON::String Locator;
+            Core::JSON::String User;
+            Core::JSON::String Group;
+            Core::JSON::DecUInt8 Threads;
+            Core::JSON::DecSInt8 Priority;
+            Core::JSON::Boolean OutOfProcess;
+            Core::JSON::EnumType<ModeType> Mode;
+            Core::JSON::String RemoteAddress;
+            Core::JSON::String Configuration;
+        };
+
     public:
         Config()
             : Core::JSON::Container()
@@ -36,7 +201,6 @@ namespace Plugin {
             , Locator()
             , ClassName()
             , Versions()
-            , AutoStart(true)
             , Resumed(false)
             , WebUI()
             , Precondition()
@@ -44,13 +208,15 @@ namespace Plugin {
             , Configuration(false)
             , PersistentPathPostfix()
             , VolatilePathPostfix()
+            , SystemRootPath()
             , StartupOrder(50)
+            , StartMode(PluginHost::IShell::startmode::ACTIVATED)
+            , Communicator()
         {
             Add(_T("callsign"), &Callsign);
             Add(_T("locator"), &Locator);
             Add(_T("classname"), &ClassName);
             Add(_T("versions"), &Versions);
-            Add(_T("autostart"), &AutoStart);
             Add(_T("resumed"), &Resumed);
             Add(_T("webui"), &WebUI);
             Add(_T("precondition"), &Precondition);
@@ -58,7 +224,10 @@ namespace Plugin {
             Add(_T("configuration"), &Configuration);
             Add(_T("persistentpathpostfix"), &PersistentPathPostfix);
             Add(_T("volatilepathpostfix"), &VolatilePathPostfix);
+            Add(_T("systemrootpath"), &SystemRootPath);
             Add(_T("startuporder"), &StartupOrder);
+            Add(_T("startmode"), &StartMode);
+            Add(_T("communicator"), &Communicator);
         }
         Config(const Config& copy)
             : Core::JSON::Container()
@@ -66,7 +235,6 @@ namespace Plugin {
             , Locator(copy.Locator)
             , ClassName(copy.ClassName)
             , Versions(copy.Versions)
-            , AutoStart(copy.AutoStart)
             , Resumed(copy.Resumed)
             , WebUI(copy.WebUI)
             , Precondition(copy.Precondition)
@@ -74,13 +242,15 @@ namespace Plugin {
             , Configuration(copy.Configuration)
             , PersistentPathPostfix(copy.PersistentPathPostfix)
             , VolatilePathPostfix(copy.VolatilePathPostfix)
+            , SystemRootPath(copy.SystemRootPath)
             , StartupOrder(copy.StartupOrder)
+            , StartMode(copy.StartMode)
+            , Communicator(copy.Communicator)
         {
             Add(_T("callsign"), &Callsign);
             Add(_T("locator"), &Locator);
             Add(_T("classname"), &ClassName);
             Add(_T("versions"), &Versions);
-            Add(_T("autostart"), &AutoStart);
             Add(_T("resumed"), &Resumed);
             Add(_T("webui"), &WebUI);
             Add(_T("precondition"), &Precondition);
@@ -88,10 +258,12 @@ namespace Plugin {
             Add(_T("configuration"), &Configuration);
             Add(_T("persistentpathpostfix"), &PersistentPathPostfix);
             Add(_T("volatilepathpostfix"), &VolatilePathPostfix);
+            Add(_T("systemrootpath"), &SystemRootPath);
+            Add(_T("startuporder"), &StartupOrder);
+            Add(_T("startmode"), &StartMode);
+            Add(_T("communicator"), &Communicator);
         }
-        ~Config()
-        {
-        }
+        ~Config() override = default;
 
         Config& operator=(const Config& RHS)
         {
@@ -99,7 +271,6 @@ namespace Plugin {
             Locator = RHS.Locator;
             ClassName = RHS.ClassName;
             Versions = RHS.Versions;
-            AutoStart = RHS.AutoStart;
             Resumed = RHS.Resumed;
             WebUI = RHS.WebUI;
             Configuration = RHS.Configuration;
@@ -107,7 +278,10 @@ namespace Plugin {
             Termination = RHS.Termination;
             PersistentPathPostfix = RHS.PersistentPathPostfix;
             VolatilePathPostfix = RHS.VolatilePathPostfix;
+            SystemRootPath = RHS.SystemRootPath;
             StartupOrder = RHS.StartupOrder;
+            StartMode = RHS.StartMode;
+            Communicator = RHS.Communicator;
 
             return (*this);
         }
@@ -129,7 +303,6 @@ namespace Plugin {
         Core::JSON::String Locator;
         Core::JSON::String ClassName;
         Core::JSON::String Versions;
-        Core::JSON::Boolean AutoStart;
         Core::JSON::Boolean Resumed;
         Core::JSON::String WebUI;
         Core::JSON::ArrayType<Core::JSON::EnumType<PluginHost::ISubSystem::subsystem>> Precondition;
@@ -137,7 +310,10 @@ namespace Plugin {
         Core::JSON::String Configuration;
         Core::JSON::String PersistentPathPostfix;
         Core::JSON::String VolatilePathPostfix;
+        Core::JSON::String SystemRootPath;
         Core::JSON::DecUInt32 StartupOrder;
+        Core::JSON::EnumType<PluginHost::IShell::startmode> StartMode;
+        Core::JSON::String Communicator;
 
         static Core::NodeId IPV4UnicastNode(const string& ifname);
 
@@ -162,15 +338,18 @@ namespace Plugin {
 
     public:
         Setting(const string& key, const bool value)
+            : Trace::Text()
         {
             Trace::Text::Set(_T("Setting: [") + key + _T("] set to value [") + (value ? _T("TRUE]") : _T("FALSE]")));
         }
         Setting(const string& key, const string& value)
+            : Trace::Text()
         {
             Trace::Text::Set(_T("Setting: [") + key + _T("] set to value [") + value + _T("]"));
         }
         template <typename NUMBERTYPE, const bool SIGNED, const NumberBase BASETYPE>
         Setting(const string& key, const NUMBERTYPE value)
+            : Trace::Text()
         {
             Core::NumberType<NUMBERTYPE, SIGNED, BASETYPE> number(value);
             Trace::Text::Set(_T("Setting: [") + key + _T("] set to value [") + number.Text() + _T("]"));
@@ -181,5 +360,3 @@ namespace Plugin {
     };
 }
 }
-
-#endif // __WEBBRIDGESUPPORT_CONFIGURATION_H

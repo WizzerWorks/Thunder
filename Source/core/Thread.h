@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -162,7 +162,8 @@ namespace Core {
             BLOCKED = 0x0008,
             STOPPED = 0x0010,
             INITIALIZED = 0x0020,
-            STOPPING = 0x0040
+            STOPPING = 0x0040,
+            FAILED = 0x0080
 
         } thread_state;
 
@@ -177,6 +178,21 @@ namespace Core {
         }
 
     public:
+
+        #ifdef __CORE_EXCEPTION_CATCHING__
+        struct IExceptionCallback
+        {
+            virtual ~IExceptionCallback() = default;
+            virtual void Exception(const string& message) = 0;
+        };
+
+        static void ExceptionCallback(IExceptionCallback* callback)
+        {
+            ASSERT(( callback != nullptr ) ^ ( _exceptionHandler != nullptr ));
+            _exceptionHandler = callback;
+        }
+        #endif
+                
         Thread(const uint32_t stackSize = Thread::DefaultStackSize(), const TCHAR* threadName = nullptr);
         virtual ~Thread();
 
@@ -195,18 +211,16 @@ namespace Core {
         {
             return (m_enumState == BLOCKED);
         }
+        inline bool IsFailed() const
+        {
+            return (m_enumState == FAILED);
+        }
         int PriorityMin() const;
         int PriorityMax() const;
         bool Priority(int priority);
         inline ::ThreadId Id() const
         {
-#if defined(__WINDOWS__) || defined(__APPLE__)
-#pragma warning(disable : 4312)
-            return (reinterpret_cast<const ::ThreadId>(m_ThreadId));
-#pragma warning(default : 4312)
-#else
-            return (static_cast<::ThreadId>(m_ThreadId));
-#endif
+            return (m_ThreadId);
         }
         static ::ThreadId ThreadId();
 
@@ -260,16 +274,21 @@ namespace Core {
 #ifdef __POSIX__
         Event m_sigExit;
         pthread_t m_hThreadInstance;
-        uint32_t m_ThreadId;
 #endif
 
 #ifdef __WINDOWS__
         Event m_sigExit;
         thread_state m_enumSuspendedState;
         HANDLE m_hThreadInstance;
-        DWORD m_ThreadId;
 #endif
+
+        ::ThreadId m_ThreadId;
         static uint32_t _defaultStackSize;
+
+#ifdef __CORE_EXCEPTION_CATCHING__
+        static IExceptionCallback* _exceptionHandler;
+#endif
+
     };
 
 }

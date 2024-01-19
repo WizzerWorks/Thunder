@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -462,6 +462,10 @@ namespace Core {
         }
     }
 
+    uint32_t AdapterIterator::MACAddress(const uint8_t[6]) {
+        return (Core::ERROR_NOT_SUPPORTED);
+    }
+
     static std::map<uint64_t, ULONG> _contextSaving;
 
     uint32_t AdapterIterator::Add(const IPNode& address)
@@ -549,7 +553,7 @@ namespace Core {
         ~IPAddressModifyType() override = default;
 
     private:
-        uint16_t Write(uint8_t stream[], const uint16_t length) const override
+        uint16_t Write(uint8_t stream[], const uint16_t length VARIABLE_IS_NOT_USED) const override
         {
             uint16_t result = sizeof(struct ifaddrmsg) + 2 * (RTA_LENGTH(_node.Type() == NodeId::TYPE_IPV6 ? 16 : 4));
 
@@ -719,7 +723,7 @@ namespace Core {
     class IPNetworks {
     private:
         using Map = std::map<uint32_t, Core::ProxyType<Network> >;
-        using Element = std::pair<uint32_t, Core::ProxyType<Network> >;
+        using Element = std::pair<const uint32_t, Core::ProxyType<Network> >;
         using Iterator = IteratorMapType<Map, const Core::ProxyType<const Network>&, uint32_t>;
 
         class LinkSocket : public SocketNetlink {
@@ -762,6 +766,7 @@ namespace Core {
                         result = Update(false, reinterpret_cast<const struct ifaddrmsg*>(stream), length);
                         break;
                     default:
+                        TRACE_L1("NetworkInfo: unhandled Netlink notification type [%i]", Type());
                         break;
                     }
 
@@ -863,14 +868,17 @@ namespace Core {
                     }
 
                 private:
-                    uint16_t Write(uint8_t stream[], const uint16_t maxLength) const override
+                    uint16_t Write(uint8_t stream[], const uint16_t maxLength VARIABLE_IS_NOT_USED) const override
                     {
-                        const uint16_t length = sizeof(struct rtgenmsg);
+                        const uint16_t length = sizeof(struct ifinfomsg);
                         ASSERT(length <= maxLength);
 
-                        struct rtgenmsg* message(reinterpret_cast<struct rtgenmsg*>(stream));
-                        ::memset(message, 0, sizeof(struct rtgenmsg));
-                        message->rtgen_family = AF_UNSPEC;
+                        struct ifinfomsg* message(reinterpret_cast<struct ifinfomsg*>(stream));
+                        ::memset(message, 0, sizeof(struct ifinfomsg));
+                        message->ifi_family = AF_UNSPEC;
+                        message->ifi_index = 0 /* all of them */;
+                        message->ifi_change = 0xFFFFFFFF;
+
 
                         return (length);
                     }
@@ -892,7 +900,7 @@ namespace Core {
                     }
 
                 private:
-                    uint16_t Write(uint8_t stream[], const uint16_t maxLength) const override
+                    uint16_t Write(uint8_t stream[], const uint16_t maxLength VARIABLE_IS_NOT_USED) const override
                     {
                         const uint16_t length = sizeof(struct ifaddrmsg);
                         ASSERT(length <= maxLength);
@@ -915,8 +923,10 @@ namespace Core {
             LinkSocket(const LinkSocket&) = delete;
             LinkSocket& operator=(const LinkSocket&) = delete;
 
-            LinkSocket(IPNetworks& parent)
-                : SocketNetlink(NodeId(NETLINK_ROUTE, 0, (RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR)))
+            LinkSocket(IPNetworks& parent, bool listener)
+                : SocketNetlink(NodeId(NETLINK_ROUTE,
+                                       0 /* kernel takes care of assigining a unique socket ID */,
+                                       (listener? (RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR) : 0)))
                 , _messageSink(parent)
             {
             }
@@ -929,17 +939,27 @@ namespace Core {
             void Open()
             {
                 if (SocketDatagram::IsOpen() != true) {
-                    if (SocketDatagram::Open(1000) == ERROR_NONE) {
-                        // Must request the complete interface structure first, synchronously,
-                        // further updates are only notifications of changes.
-                        RequestUpdate();
+                    if (SocketDatagram::Open(1000) != ERROR_NONE) {
+                        TRACE_L1("NetworkInfo: Failed to open Netlink socket");
                     }
                 }
             }
             void Close()
             {
-                if (SocketDatagram::IsOpen() == true) {
-                    SocketDatagram::Close(Core::infinite);
+                SocketDatagram::Close(Core::infinite);
+            }
+
+        public:
+            void RequestStatus()
+            {
+                TRACE_L1("NetworkInfo: Requesting interface information update via Netlink...");
+
+                if (Exchange(Message::GetLink(), _messageSink, 2000) != ERROR_NONE) {
+                    TRACE_L1("NetworkInfo: Failed to retrieve interface information");
+                } else {
+                    if (Exchange(Message::GetAddress(), _messageSink, 2000) != ERROR_NONE) {
+                        TRACE_L1("NetworkInfo: Failed to retrieve interface address information");
+                    }
                 }
             }
 
@@ -948,20 +968,6 @@ namespace Core {
             {
                 // Spontaneous notification...
                 return (_messageSink.Deserialize(stream, length));
-            }
-
-        private:
-            void RequestUpdate()
-            {
-                TRACE_L1("NetworkInfo: Requesting interface information update via Netlink...");
-
-                if (Exchange(Message::GetLink(), _messageSink, 500) != ERROR_NONE) {
-                    TRACE_L1("NetworkInfo: Failed to retrieve interface information");
-                } else {
-                    if (Exchange(Message::GetAddress(), _messageSink, 500) != ERROR_NONE) {
-                        TRACE_L1("NetworkInfo: Failed to retrieve interface address information");
-                    }
-                }
             }
 
         private:
@@ -1044,11 +1050,21 @@ namespace Core {
             : _adminLock()
             , _channel(ProxyType<Channel>::Create())
             , _networks()
-            , _linkSocket(*this)
+            , _linkSocket(*this, true)
             , _observers()
         {
             ASSERT(IsValid());
+
+            // Listen for link updates...
             _linkSocket.Open();
+
+            // Request link status explicilty in case any interfaces were constructed before the listener started.
+            LinkSocket request(*this, false);
+            request.Open();
+            if (request.IsOpen() == true) {
+                request.RequestStatus();
+                request.Close();
+            }
         }
 
     public:
@@ -1071,7 +1087,7 @@ namespace Core {
         {
             return ((_channel.IsValid()) && (_channel->IsValid() == true));
         }
-        void Load (std::list<Core::ProxyType<Network> >& list) {
+        void Load(std::list<Core::ProxyType<Network>>& list) {
             _adminLock.Lock();
             for (const Element& element : _networks) {
                 list.push_back(element.second);
@@ -1140,20 +1156,24 @@ namespace Core {
             }
         }
         void Added(const uint32_t id, const Core::IPNode& node) {
+            _adminLock.Lock();
             Map::iterator index(_networks.find(id));
             if (index != _networks.end()) {
                 if (index->second->Added(node) == true) {
                     NotifyAddressUpdate(index->second->Name(), node, true);
                 }
             }
+            _adminLock.Unlock();
         }
         void Removed(const uint32_t id, const Core::IPNode& node) {
+            _adminLock.Lock();
             Map::iterator index(_networks.find(id));
             if (index != _networks.end()) {
                 if (index->second->Removed(node) == true ) {
                     NotifyAddressUpdate(index->second->Name(), node, false);
                 }
             }
+            _adminLock.Unlock();
         }
 
     private:
@@ -1562,6 +1582,32 @@ namespace Core {
         }
     }
 
+    uint32_t Network::MAC(const uint8_t buffer[6]) {
+        uint32_t result = (IsUp() == false ? Core::ERROR_NONE : Core::ERROR_ILLEGAL_STATE);
+
+        if (result == Core::ERROR_NONE) {
+            struct ifreq ifr;
+
+            ::bzero(ifr.ifr_name, IFNAMSIZ);
+            ::strncpy(ifr.ifr_name, _name.c_str(), IFNAMSIZ - 1);
+            ::memcpy(ifr.ifr_hwaddr.sa_data, buffer, 6);
+            ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
+
+            int fd = socket(AF_INET, SOCK_DGRAM, 0);
+            if(fd < 0) {
+                result = Core::ERROR_OPENING_FAILED;
+            }
+            else {
+                if(ioctl(fd, SIOCSIFHWADDR, &ifr) < 0)
+                {
+                    result = Core::ERROR_BAD_REQUEST;
+                }
+                ::close(fd);
+            }
+        }
+        return(result);
+    }
+
     AdapterIterator::AdapterIterator()
         : _reset(true)
         , _list()
@@ -1651,7 +1697,7 @@ namespace Core {
     bool AdapterIterator::HasMAC() const
     {
         uint8_t index = 0;
-        uint8_t mac[6];
+        uint8_t mac[MacSize];
         MACAddress(mac, sizeof(mac));
 
         while ((index < sizeof(mac)) && (mac[index] == 0)) {

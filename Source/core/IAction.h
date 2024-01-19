@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,22 +21,30 @@
 #define __IACTION_H
 
 #include "Module.h"
+#include "Trace.h"
+#include "TextFragment.h"
 
 namespace WPEFramework {
 namespace Core {
     template <typename ELEMENT>
     struct IDispatchType {
-        virtual ~IDispatchType(){};
+        virtual ~IDispatchType() = default;
         virtual void Dispatch(ELEMENT& element) = 0;
     };
 
     template <>
     struct IDispatchType<void> {
-        virtual ~IDispatchType(){};
+        virtual ~IDispatchType() = default;
         virtual void Dispatch() = 0;
     };
 
-    typedef IDispatchType<void> IDispatch;
+    struct EXTERNAL IDispatch : public IDispatchType<void> {
+        ~IDispatch() override = default;
+
+        virtual string Identifier() const {
+            return (ClassName(typeid(*this).name()).Text());
+        }
+    };
 }
 } // namespace Core
 

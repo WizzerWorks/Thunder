@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@
 
 #include <linux/version.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,15)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 #include <sys/sysinfo.h>
 #else
 #ifdef __cplusplus
@@ -77,12 +77,7 @@ namespace Core {
         const uint8_t SystemPrefixLength,
         const uint8_t KeyLength)
     {
-#ifdef __WINDOWS__
-        TCHAR* buffer = reinterpret_cast<TCHAR*>(ALLOCA(KeyLength + 1));
-#else
-        TCHAR buffer[KeyLength + 1];
-        buffer[0] = '\0';
-#endif
+        TCHAR* buffer = static_cast<TCHAR*>(ALLOCA(sizeof(TCHAR) * (KeyLength + 1)));
 
         if (KeyLength == UINT8_MAX) {
             ::memcpy(buffer, SystemPrefix, SystemPrefixLength);
@@ -132,33 +127,6 @@ namespace Core {
 #else
     static const TCHAR _systemPrefix[] = _T("WPE");
 #endif
-
-    // Use MAC address and let the framework handle the OTP ID.
-    const uint8_t* SystemInfo::RawDeviceId() const
-    {
-        static uint8_t* MACAddress = nullptr;
-        static uint8_t MACAddressBuffer[7];
-
-        if (MACAddress == nullptr) {
-            bool valid = false;
-            Core::AdapterIterator adapters;
-
-            while ((adapters.Next() == true) && (valid == false)) {
-                uint8_t check = 1;
-                adapters.MACAddress(&MACAddressBuffer[1], 6);
-                while ((check <= 4) && (MACAddressBuffer[check] == 0)) {
-                    check++;
-                }
-                valid = (check <= 4);
-            }
-
-            MACAddressBuffer[0] = 6;
-
-            MACAddress = &MACAddressBuffer[0];
-        }
-
-        return MACAddress;
-    }
 
     string SystemInfo::Id(const uint8_t RawDeviceId[], const uint8_t KeyLength)
     {
@@ -303,8 +271,6 @@ namespace Core {
             else
                 SystemInfo::m_cpuload = ((DeltaTickCount - DeltaIdleTime) * 100) / DeltaTickCount;
 
-            SystemInfo::m_jiffies = CurrentTickCount;
-
             // Store current tick statistics for next cycle
             previousTickCount = CurrentTickCount;
             previousIdleTime = CurrentIdleTime;
@@ -315,58 +281,6 @@ namespace Core {
 
 #endif
     }
-
-#if defined(__LINUX__) && !defined(__APPLE__)
-
-
-    // Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
-    // Licensed under the BSD-3 License
- 
-
-    // GMT specific version of mktime(), taken from BSD source code
-    /* Number of days per month (except for February in leap years). */
-    static const int monoff[] = {
-        0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
-    };
-
-    static int is_leap_year(int year)
-    {
-        return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    }
-
-    static int leap_days(int y1, int y2)
-    {
-        --y1;
-        --y2;
-        return (y2 / 4 - y1 / 4) - (y2 / 100 - y1 / 100) + (y2 / 400 - y1 / 400);
-    }
-   /*
-    * Code adapted from Python 2.4.1 sources (Lib/calendar.py).
-    */
-    static time_t mktimegm(const struct tm* tm)
-    {
-        int year;
-        time_t days;
-        time_t hours;
-        time_t minutes;
-        time_t seconds;
-
-        year = 1900 + tm->tm_year;
-        days = 365 * (year - 1970) + leap_days(1970, year);
-        days += monoff[tm->tm_mon];
-
-        if (tm->tm_mon > 1 && is_leap_year(year))
-            ++days;
-        days += tm->tm_mday - 1;
-
-        hours = days * 24 + tm->tm_hour;
-        minutes = hours * 60 + tm->tm_min;
-        seconds = minutes * 60 + tm->tm_sec;
-
-        return seconds;
-    }
-
-#endif
 
     void SystemInfo::UpdateRealtimeInfo()
     {
@@ -418,11 +332,7 @@ namespace Core {
         ASSERT("Time not set");
 #else
 
-        struct tm setTime;
-
-        ::memcpy(&setTime, &(time.Handle()), sizeof(setTime));
-
-        time_t value = mktimegm(&setTime);
+        time_t value = time.Handle().tv_sec;
 
 #if defined(__GNU_LIBRARY__)
   #if (__GLIBC__ >= 2) && (__GLIBC_MINOR__ > 30)
@@ -439,6 +349,14 @@ namespace Core {
         } else {
             TRACE_L1("System time updated [%d]", errno);
         }
+#endif
+    }
+
+    void SystemInfo::SetTimeZone(const string& tz, const bool forcedupdate)
+    {
+       SetEnvironment(_T("TZ"), tz, forcedupdate);
+#ifdef __LINUX__
+       ::tzset();
 #endif
     }
 
@@ -521,7 +439,8 @@ namespace Core {
                     if (line.find("Hardware") != std::string::npos) {
                         std::size_t position = line.find(':');
                         if (position != std::string::npos) {
-                            result.assign(line.substr(position + 1, string::npos));
+                            result.assign(line.substr(line.find_first_not_of(" ", position + 1)));
+                            break;
                         }
                     }
                 }
@@ -536,7 +455,8 @@ namespace Core {
                         if (line.find("model name") != std::string::npos) {
                             std::size_t position = line.find(':');
                             if (position != std::string::npos) {
-                                result.assign(line.substr(position + 1, string::npos));
+                                result.assign(line.substr(line.find_first_not_of(" ", position + 1)));
+                                break;
                             }
                         }
                     }

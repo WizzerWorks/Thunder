@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -261,9 +261,7 @@ namespace Core {
         StreamTextType<SOURCE, TEXTTERMINATOR>& operator=(const StreamTextType<SOURCE, TEXTTERMINATOR>&);
 
     public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         StreamTextType()
             : _channel(*this)
             , _adminLock()
@@ -384,9 +382,7 @@ namespace Core {
         {
         }
 
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
         virtual ~StreamTextType()
         {
             _channel.Close(Core::infinite);

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,12 +29,10 @@
 #ifdef __LINUX__
 #include <atomic>
 #include <signal.h>
+#include <elf.h>
 #endif
 
 using namespace WPEFramework;
-
-MODULE_NAME_DECLARATION(BUILD_REFERENCE)
-
 
 #ifdef __WINDOWS__
 
@@ -79,7 +77,7 @@ int clock_gettime(int, struct timespec*)
 }
 #endif
 
-#if defined(__LINUX__) && defined(THUNDER_BACKTRACE)
+#if defined(THUNDER_BACKTRACE)
 
 static std::atomic<bool> g_lock(false);
 static pthread_t g_targetThread;
@@ -95,6 +93,9 @@ static void* GetPCFromUContext(void* secret)
 #if defined(__arm__)
     ucontext_t* ucp = reinterpret_cast<ucontext_t*>(secret);
     pnt = reinterpret_cast<void*>(ucp->uc_mcontext.arm_pc);
+#elif defined(__aarch64__)
+    ucontext_t* ucp = reinterpret_cast<ucontext_t*>(secret);
+    pnt = reinterpret_cast<void*>(ucp->uc_mcontext.pc);
 #elif defined(__APPLE__)
     ucontext_t* uc = (ucontext_t*)secret;
     pnt = reinterpret_cast<void*>(uc->uc_mcontext->__ss.__rip);
@@ -147,7 +148,13 @@ uint32_t GetCallStack(const ThreadId threadId, void* addresses[], const uint32_t
 
     if ((threadId == 0) || (pthread_self() == threadId)) {
         result = backtrace(addresses, bufferSize);
-    } else {
+        if (result > 1) {
+            for (uint32_t index = 0; index < result; index++) {
+                addresses[index] = addresses[index + 1];
+            }
+            --result;
+        }
+    } else if (threadId != (::ThreadId)(~0)) {
         while (std::atomic_exchange_explicit(&g_lock, true, std::memory_order_acquire))
             ; // spin until acquired
 
@@ -180,89 +187,116 @@ uint32_t GetCallStack(const ThreadId threadId, void* addresses[], const uint32_t
     return result;
 }
 
-#else
-
-uint32_t GetCallStack(const ThreadId threadId, void* addresses[], const uint32_t bufferSize)
-{
-    #ifdef __WINDOWS__
-    __debugbreak();
-    #endif
-
-    return (0);
-}
-
-#endif // __LINUX__
-
-void* memrcpy(void* _Dst, const void* _Src, size_t _MaxCount)
-{
-    unsigned char* destination = static_cast<unsigned char*>(_Dst) + _MaxCount - 1;
-    const unsigned char* source = static_cast<const unsigned char*>(_Src) + _MaxCount - 1;
-
-    while (_MaxCount) {
-        *destination-- = *source--;
-        --_MaxCount;
-    }
-
-    return (destination);
-}
+#endif // BACKTRACE
 
 extern "C" {
 
-void DumpCallStack(const ThreadId threadId, std::list<string>& stackList)
+void DumpCallStack(const ThreadId threadId VARIABLE_IS_NOT_USED, std::list<WPEFramework::Core::callstack_info>& stackList VARIABLE_IS_NOT_USED)
 {
-#ifdef __DEBUG__
-#ifdef __LINUX__
+#if defined(THUNDER_BACKTRACE)
     void* callstack[32];
 
     uint32_t entries = GetCallStack(threadId, callstack, (sizeof(callstack) / sizeof(callstack[0])));
 
-    char** symbols = backtrace_symbols(callstack, entries);
-
     for (uint32_t i = 0; i < entries; i++) {
-        char  buffer[1024];
         Dl_info info;
-        if (dladdr(callstack[i], &info) && info.dli_sname) {
-            char* demangled = NULL;
-            int status = -1;
-            if (info.dli_sname[0] == '_') {
-                demangled = abi::__cxa_demangle(info.dli_sname, NULL, 0, &status);
-            }
-            snprintf(buffer, sizeof(buffer), "%-3d %*p %s + %zd\n", i, int(2 + sizeof(void*) * 2), callstack[i],
-                status == 0 ? demangled : info.dli_sname == 0 ? symbols[i] : info.dli_sname,
-                (char*)callstack[i] - (char*)info.dli_saddr);
+        const Elf32_Sym* additionalInfo;
+        Core::callstack_info entry;
 
-            free(demangled);
-        } else {
-            snprintf(buffer, sizeof(buffer), "%-3d %*p %s\n",
-            i, int(2 + sizeof(void*) * 2), callstack[i], symbols[i]);
+        entry.address = callstack[i];
+
+        if (dladdr1(callstack[i], &info, (void**) &additionalInfo, RTLD_DL_SYMENT) == 0) {
+            entry.line = ~0;
+            entry.module = EMPTY_STRING;
+            entry.function = EMPTY_STRING;
         }
-        stackList.push_back(Core::ToString(buffer));
+        else {
+            if (info.dli_fname != nullptr) {
+                entry.module = string(info.dli_fname);
+            }
+            
+            if (info.dli_sname == nullptr) {
+                entry.line = ~0;
+            }
+            else {
+                char* demangled;
+                int status = -1;
+
+                demangled = abi::__cxa_demangle(info.dli_sname, NULL, 0, &status);
+
+                if ( (demangled == nullptr) || (status != 0) || (demangled[0] == '\0') ) {
+                    entry.function = string(info.dli_sname);
+                }
+                else {
+                    entry.function = string(demangled);
+                }
+                
+                entry.line = (char*)callstack[i] - (char*)info.dli_saddr;
+
+                if (demangled != nullptr) {
+                    free(demangled);
+                }
+            }
+        }
+
+        stackList.push_back(entry);
     }
-    free(symbols);
+
 #else
+
+    #ifdef __WINDOWS__
     __debugbreak();
-#endif
+    #endif
+
 #endif
 }
 }
 
 #ifdef __LINUX__
 
-void SleepMs(unsigned int a_Time)
-{
-    struct timespec sleepTime;
-    struct timespec waitedTime;
+void SleepMs(const unsigned int time) {
+    int result;
+    struct timespec elapse;
 
-    if (a_Time == 0) 
-        a_Time = 1;
+    if (time == 0) {
+        elapse.tv_sec = 0;
+        elapse.tv_nsec = 1000;
+    }
+    else {
+        elapse.tv_sec = time / 1000;
+        elapse.tv_nsec = (time % 1000) * 1000000;
+    }
 
-    sleepTime.tv_sec = (a_Time / 1000);
-    sleepTime.tv_nsec = (a_Time - (sleepTime.tv_sec * 1000)) * 1000000;
+    while ( ((result = ::nanosleep(&elapse, &elapse)) != 0) && (errno == EINTR) ) /* Intentionally left empty */;
+}
 
-    ::nanosleep(&sleepTime, &waitedTime);
+void SleepUs(const unsigned int time) {
+    int result;
+    struct timespec elapse;
+
+    if (time == 0) {
+        elapse.tv_sec = 0;
+        elapse.tv_nsec = 1000;
+    }
+    else {
+        elapse.tv_sec = time / 1000000;
+        elapse.tv_nsec = (time % 1000000) * 1000;
+    }
+
+    while ( ((result = ::nanosleep(&elapse, &elapse)) != 0) && (errno == EINTR) ) /* Intentionally left empty */;
 }
 
 #endif
+
+#if defined(__WINDOWS__)
+
+void SleepUs(const uint32_t time) {
+    std::this_thread::sleep_for(std::chrono::microseconds(time));
+}
+
+#endif
+
+
 
 #if !defined(__WINDOWS__) && !defined(__APPLE__)
 
@@ -301,21 +335,6 @@ uint64_t ntohll(const uint64_t& value)
 
 namespace WPEFramework {
 namespace Core {
-
-    /* virtual */ IIPC::~IIPC() {}
-    /* virtual */ IIPCServer::~IIPCServer() {}
-    /* virtual */ IPCChannel::~IPCChannel() {}
-
-
-
-    // In windows you need the newest compiler for this...
-    //template <typename First, typename... Rest> const string Format(const First* first, const Rest&... rest) {
-    //	TCHAR buffer[2057];
-
-    //	::vsnprintf_s (buffer, sizeof(buffer),sizeof(buffer), first, rest...);
-
-    //	return (string(buffer));
-    //}
 
 #ifndef va_copy
 #ifdef _MSC_VER

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,15 +40,12 @@ namespace PluginHost {
         };
 
         class RepeatKeyTimer : public Core::IDispatch {
-        private:
+        public:
             RepeatKeyTimer() = delete;
             RepeatKeyTimer(const RepeatKeyTimer&) = delete;
             RepeatKeyTimer& operator=(const RepeatKeyTimer&) = delete;
 
-        public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
             RepeatKeyTimer(VirtualInput* parent)
                 : _parent(*parent)
                 , _adminLock()
@@ -59,12 +56,8 @@ namespace PluginHost {
                 , _job()
             {
             }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-            ~RepeatKeyTimer() override
-            {
-            }
+POP_WARNING()
+            ~RepeatKeyTimer() override = default;
 
         public:
             void AddReference()
@@ -183,9 +176,7 @@ namespace PluginHost {
                     Add(_T("key"), &Key);
                     Add(_T("modifiers"), &Modifiers);
                 }
-                virtual ~KeyMapEntry()
-                {
-                }
+                ~KeyMapEntry() override = default;
 
             public:
                 Core::JSON::HexUInt32 Code;
@@ -206,7 +197,7 @@ namespace PluginHost {
             typedef Core::IteratorMapType<const LookupMap, const ConversionInfo&, uint32_t, LookupMap::const_iterator> Iterator;
 
         public:
-            KeyMap(KeyMap&&) = default;
+            KeyMap(KeyMap&&) noexcept = default;
             KeyMap(VirtualInput& parent)
                 : _parent(parent)
                 , _passThrough(false)
@@ -225,8 +216,8 @@ namespace PluginHost {
             {
                 _passThrough = enabled;
             }
-            uint32_t Load(const string& mappingFile);
-            uint32_t Save(const string& mappingFile);
+            uint32_t Import(const Core::JSON::ArrayType<KeyMapEntry>& mappingTable);
+            void Export(Core::JSON::ArrayType<KeyMapEntry>& mappingTable);
 
             inline const ConversionInfo* operator[](const uint32_t code) const
             {
@@ -372,7 +363,7 @@ namespace PluginHost {
 
     public:
         struct EXTERNAL INotifier {
-            virtual ~INotifier() {}
+            virtual ~INotifier() = default;
             virtual void Dispatch(const IVirtualInput::KeyData::type type, const uint32_t code) = 0;
         };
         typedef std::map<const uint32_t, const uint32_t> PostLookupEntries;
@@ -406,9 +397,7 @@ namespace PluginHost {
                         Add(_T("code"), &Code);
                         Add(_T("mods"), &Mods);
                     }
-                    virtual ~KeyCode()
-                    {
-                    }
+                    virtual ~KeyCode() = default;
 
                 public:
                     Core::JSON::DecUInt16 Code;
@@ -432,9 +421,7 @@ namespace PluginHost {
                     Add(_T("in"), &In);
                     Add(_T("out"), &Out);
                 }
-                virtual ~Conversion()
-                {
-                }
+                virtual ~Conversion() = default;
 
             public:
                 KeyCode In;
@@ -639,6 +626,20 @@ namespace PluginHost {
 
             return (result);
         }
+        inline bool Modifier(uint16_t code)
+        {
+            switch (code) {
+                case KEY_LEFTSHIFT:
+                case KEY_RIGHTSHIFT:
+                case KEY_LEFTALT:
+                case KEY_RIGHTALT:
+                case KEY_LEFTCTRL:
+                case KEY_RIGHTCTRL: {
+                    return true;
+                }
+            }
+            return false;
+        }
 
     protected:
         Core::CriticalSection _lock;
@@ -697,6 +698,7 @@ namespace PluginHost {
     private:
         class EXTERNAL InputDataLink : public Core::IDispatchType<Core::IIPC> {
         public:
+            InputDataLink(InputDataLink&&) = delete;
             InputDataLink(const InputDataLink&) = delete;
             InputDataLink& operator=(const InputDataLink&) = delete;
 
@@ -709,20 +711,18 @@ namespace PluginHost {
                 , _replacement(Core::ProxyType<IVirtualInput::KeyMessage>::Create())
             {
             }
-            virtual ~InputDataLink()
-            {
-            }
+            ~InputDataLink() override = default;
 
         public:
-            inline bool Enable() const
+            bool Enable() const
             {
                 return (_enabled);
             }
-            inline void Enable(const bool enabled)
+            void Enable(const bool enabled)
             {
                 _enabled = enabled;
             }
-            inline Core::ProxyType<Core::IIPC> InvokeAllowed(const Core::ProxyType<Core::IIPC>& element) const
+            Core::ProxyType<Core::IIPC> InvokeAllowed(const Core::ProxyType<Core::IIPC>& element) const
             {
                 Core::ProxyType<Core::IIPC> result;
 
@@ -748,18 +748,18 @@ namespace PluginHost {
                 }
                 return (result);
             }
-            inline const string& Name() const
+            const string& Name() const
             {
                 return (_name);
             }
-            inline void Parent(IPCUserInput& parent, const bool enabled)
+            void Parent(IPCUserInput& parent, const bool enabled)
             {
                 // We assume it will only be set, if the client reports it self in, once !
                 ASSERT(_parent == nullptr);
                 _parent = &parent;
                 _enabled = enabled;
             }
-            inline void Reload()
+            void Reload()
             {
                 _postLookup = _parent->FindPostLookup(_name);
             }
@@ -771,7 +771,7 @@ namespace PluginHost {
 
                 return ((index & _mode) != 0);
             }
-            virtual void Dispatch(Core::IIPC& element) override
+            void Dispatch(Core::IIPC& element) override
             {
                 ASSERT(dynamic_cast<IVirtualInput::NameMessage*>(&element) != nullptr);
 
@@ -791,16 +791,22 @@ namespace PluginHost {
 
         class EXTERNAL VirtualInputChannelServer : public Core::IPCChannelServerType<InputDataLink, true> {
         private:
-            typedef Core::IPCChannelServerType<InputDataLink, true> BaseClass;
+            using BaseClass = Core::IPCChannelServerType<InputDataLink, true>;
 
         public:
+            VirtualInputChannelServer() = delete;
+            VirtualInputChannelServer(VirtualInputChannelServer&&) = delete;
+            VirtualInputChannelServer(const VirtualInputChannelServer&) = delete;
+            VirtualInputChannelServer& operator= (const VirtualInputChannelServer&) = delete;
+
             VirtualInputChannelServer(IPCUserInput& parent, const Core::NodeId& sourceName)
                 : BaseClass(sourceName, 32)
                 , _parent(parent)
             {
             }
+            ~VirtualInputChannelServer() override = default;
 
-            virtual void Added(Core::ProxyType<Client>& client) override
+            void Added(Core::ProxyType<Client>& client) override
             {
                 TRACE_L1("VirtualInputChannelServer::Added -- %d", __LINE__);
 
@@ -845,17 +851,13 @@ namespace PluginHost {
     };
 
     class EXTERNAL InputHandler {
-    private:
+    public:
+        InputHandler(InputHandler&&) = delete;
         InputHandler(const InputHandler&) = delete;
         InputHandler& operator=(const InputHandler&) = delete;
 
-    public:
-        InputHandler()
-        {
-        }
-        ~InputHandler()
-        {
-        }
+        InputHandler() = default;
+        ~InputHandler() = default;
 
         enum type {
             DEVICE,

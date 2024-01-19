@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ TEST(test_portability, simple_generic)
 
     std::string s1 = "Hello";
     uint8_t dest_buffer[6];
-    memrcpy((void*)dest_buffer,(void*)s1.c_str(),  static_cast<size_t>(5));
+    ::memmove((void*)dest_buffer,(void*)s1.c_str(),  static_cast<size_t>(5));
     dest_buffer[5] = '\0';
     EXPECT_STREQ((const char*)(dest_buffer),s1.c_str());
 }

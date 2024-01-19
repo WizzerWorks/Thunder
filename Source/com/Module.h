@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 #endif
 
 #include <core/core.h>
-#include <tracing/tracing.h>
+#include <messaging/messaging.h>
+
+#ifdef __CORE_WARNING_REPORTING__
+#include <warningreporting/warningreporting.h>
+#endif
 
 #if defined(__WINDOWS__) && defined(COM_EXPORTS)
 #undef EXTERNAL

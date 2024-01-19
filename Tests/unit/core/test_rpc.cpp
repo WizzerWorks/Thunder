@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -148,7 +148,7 @@ namespace Tests {
 
     class AdderProxy final : public ProxyStub::UnknownProxyType<IAdder> {
     public:
-        AdderProxy(const Core::ProxyType<Core::IPCChannel>& channel, RPC::instance_id implementation, const bool otherSideInformed)
+        AdderProxy(const Core::ProxyType<Core::IPCChannel>& channel, Core::instance_id implementation, const bool otherSideInformed)
             : BaseClass(channel, implementation, otherSideInformed)
         {
         }
@@ -234,7 +234,7 @@ namespace Tests {
             }
 
         private:
-            virtual void* Aquire(const string& className, const uint32_t interfaceId, const uint32_t versionId)
+            virtual void* Acquire(const string& className, const uint32_t interfaceId, const uint32_t versionId)
             {
                 void* result = nullptr;
 
@@ -275,9 +275,9 @@ namespace Tests {
           Core::NodeId remoteNode(connector.c_str());
 
           Core::ProxyType<RPC::InvokeServerType<4, 0, 1>> engine = Core::ProxyType<RPC::InvokeServerType<4, 0, 1>>::Create();
-          EXPECT_TRUE(engine != nullptr);
+          EXPECT_TRUE(engine.IsValid());
           Core::ProxyType<RPC::CommunicatorClient> client = Core::ProxyType<RPC::CommunicatorClient>::Create(remoteNode, Core::ProxyType<Core::IIPCServer>(engine));
-          EXPECT_TRUE(client != nullptr);
+          EXPECT_TRUE(client.IsValid());
           engine->Announcements(client->Announcement());
 
           // Create remote instance of "IAdder".

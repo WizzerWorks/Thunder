@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,13 +66,10 @@ namespace Core {
             }
             inline void Erase(const string& value)
             {
-                #ifdef __WINDOWS__
-                #pragma warning(disable : 4834)
-                #endif
-                std::remove(_options.begin(), _options.end(), value);
-                #ifdef __WINDOWS__
-                #pragma warning(default : 4834)
-                #endif
+                std::vector<string>::iterator index(std::find(_options.begin(), _options.end(), value));
+                if (index != _options.end()) {
+                    _options.erase(index);
+                }
             }
             inline void Clear()
             {

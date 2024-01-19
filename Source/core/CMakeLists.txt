@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,8 +22,9 @@ find_package(Threads REQUIRED)
 find_package(ExecInfo)
 find_package(LIBRT)
 
-add_library(${TARGET} SHARED
-	DoorBell.cpp
+add_library(${TARGET}
+        Module.cpp
+	    DoorBell.cpp
         CyclicBuffer.cpp
         DataElement.cpp
         DataElementFile.cpp
@@ -72,6 +73,7 @@ set(PUBLIC_HEADERS
         Enumerate.h
         Factory.h
         FileSystem.h
+        FileObserver.h
         Frame.h
         IAction.h
         IIterator.h
@@ -126,6 +128,7 @@ set(PUBLIC_HEADERS
         SystemInfo.h
         TextFragment.h
         TextReader.h
+        TextStreamRedirectType.h
         Thread.h
         ThreadPool.h
         Time.h
@@ -141,7 +144,11 @@ set(PUBLIC_HEADERS
         WarningReportingCategories.h
         Module.h
         CallsignTLS.h
+        TokenizedStringList.h
+        MessageStore.h
         )
+
+target_compile_options (${TARGET} PRIVATE -Wno-psabi)
 
 # non-buildable interface target to carry the definitions
 # All build flags that are applicable to the whole system should be set here in the 
@@ -150,16 +157,28 @@ set(PUBLIC_HEADERS
 if(DISABLE_TRACING)
     target_compile_definitions(${TARGET} PUBLIC _TRACE_LEVEL=0)
     message(STATUS "Force trace level to 0")
+else()
+    if(ENABLED_TRACING_LEVEL)
+        target_compile_definitions(${TARGET} PUBLIC _TRACE_LEVEL=${ENABLED_TRACING_LEVEL})
+        message(STATUS "Force trace level to ${ENABLED_TRACING_LEVEL}")
+    endif()
+endif()
+
+if(MESSAGING)
+    target_compile_definitions(${TARGET} PUBLIC __CORE_MESSAGING__)
+    target_sources(${TARGET} PRIVATE MessageStore.cpp)
+    message(STATUS "Messaging enabled")
 endif()
 
 if(WARNING_REPORTING)
-    target_sources(${TARGET} PRIVATE WarningReportingControl.cpp)
+    target_sources(${TARGET} PRIVATE WarningReportingControl.cpp WarningReportingCategories.cpp)
     target_compile_definitions(${TARGET} PUBLIC __CORE_WARNING_REPORTING__)
     message(STATUS "Warning reporting enabled")
 endif()
 
-if (EXCEPTION_CATCHING)
+if(EXCEPTION_CATCHING)
     target_compile_definitions(${TARGET} PUBLIC __CORE_EXCEPTION_CATCHING__)
+    set_source_files_properties( Thread.cpp PROPERTIES COMPILE_FLAGS "-fexceptions" )
     message(STATUS "Unhandled Exception catching enabled")
 endif()
 
@@ -177,7 +196,12 @@ if(NOT WCHAR_SUPPORT)
     message(STATUS "Disabled WCHAR support.")
 endif()
 
-if (BLUETOOTH)
+if (INSTANCE_ID_BITS)
+    target_compile_definitions(${TARGET} PUBLIC __CORE_INSTANCE_BITS__=${INSTANCE_ID_BITS})
+    message(STATUS "COMRPC instanceid defined as ${INSTANCE_ID_BITS} bits.")
+endif()
+
+if(BLUETOOTH_SUPPORT)
     target_compile_definitions(${TARGET} PUBLIC __CORE_BLUETOOTH_SUPPORT__)
     message(STATUS "Enable bluetooth support.")
 endif()
@@ -191,9 +215,8 @@ if(BUILD_TESTS)
 endif()
 
 target_link_libraries(${TARGET}
-        PUBLIC
-          CompileSettings::CompileSettings
         PRIVATE
+          CompileSettings::CompileSettings
           CompileSettingsDebug::CompileSettingsDebug
           ${CMAKE_DL_LIBS}
           Threads::Threads
@@ -207,6 +230,13 @@ set_target_properties(${TARGET} PROPERTIES
           VERSION ${VERSION}
           SOVERSION ${VERSION_MAJOR}
         )
+
+if (NOT BUILD_SHARED_LIBS)
+    set_property(TARGET  ${TARGET}
+            APPEND PROPERTY INTERFACE_POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
 
 target_include_directories( ${TARGET}
         PUBLIC
@@ -226,6 +256,15 @@ if(ExecInfo_FOUND)
             PRIVATE
               ${LIBEXECINFO_LIBRARY}
             )
+endif()
+
+find_package(Systemd)
+if(SYSTEMD_FOUND)
+    target_link_libraries( ${TARGET}
+        PRIVATE
+        Systemd::Systemd
+    )
+    SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -DSYSTEMD_FOUND")
 endif()
 
 # ===========================================================================================

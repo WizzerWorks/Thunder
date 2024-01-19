@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 include (CMakePackageConfigHelpers)
 
 macro(add_element list element)
-    # message(SEND_ERROR "Adding '${element}' to list '${list}'")
     list(APPEND ${list} ${element})
 endmacro()
 
@@ -64,7 +63,7 @@ function(get_if_link_libraries libs dirs target)
     if("${_type}" MATCHES "SHARED_LIBRARY" OR "${_type}" MATCHES "STATIC_LIBRARY")
         if(_is_imported)
             get_target_property(_configurations ${target} IMPORTED_CONFIGURATIONS)
-            
+
             if (_configurations)
                 list(LENGTH _configurations _configurations_count)
 
@@ -106,7 +105,7 @@ function(get_if_link_libraries libs dirs target)
         # this lib is via a findmodule imported, grab the imported location  asuming it's fins script is accourdng guidelines
         # we remove the absolute systroot to make it relative. Later we can decide to use the path in a -L argument <;-)
         get_target_property(_configurations ${target} IMPORTED_CONFIGURATIONS)
-        
+
         if (_configurations)
             list(LENGTH _configurations _configurations_count)
 
@@ -141,15 +140,16 @@ function(get_if_link_libraries libs dirs target)
             if ("${_library}" MATCHES "LINK_ONLY")
                 string(REGEX REPLACE "\\$<LINK_ONLY:" "" __fix ${_library})
                 string(REGEX REPLACE ">$" "" _library ${__fix})
+                message(AUTHOR_WARNING "${_library} is marked LINK_ONLY and is now skipped, if you experience link issues out of the blue; start here. :-)")
+                continue()
             endif()
 
             if(TARGET ${_library})
-                # message(SEND_ERROR "Checking target ${_library}")
                 get_if_link_libraries(_link_libraries _link_dirs ${_library})
             else()
                 if ("${_library}" MATCHES "^.*\\:\\:.*$")
                      # detecting one or more "::" this is normally a cmake target 
-                    message(SEND_ERROR "${_library} is assumed to be known cmake Target, but it's not known in this scope, maybe you forgot a find_package")
+                    message(SEND_ERROR "${target} wants ${_library} is assumed to be known cmake Target, but it's not known in this scope, maybe you forgot a find_package")
                 else()
                     # set(_link_libraries ${_link_libraries} ${_library})
                     add_element(_link_libraries  ${_library})
@@ -185,7 +185,6 @@ function(get_if_compile_defines _result _target)
             if(TARGET ${_define})
                 get_if_compile_defines(_compile_defines ${_define})
             else()
-                #set(_compile_defines ${_compile_defines} ${_define})
                 add_element(_compile_defines ${_define})
             endif()
         endforeach()
@@ -399,11 +398,11 @@ function(InstallCMakeConfig)
                         endif()
 
                         get_target_property(_is_imported ${_dependency} IMPORTED)
-                    
+
                         if(_type_is_ok)
                             if(_is_imported)
                                 get_target_property(_configurations ${_dependency} IMPORTED_CONFIGURATIONS)
-                            
+
                                 if (_configurations)
                                     list(LENGTH _configurations _configurations_count)
 
@@ -414,13 +413,18 @@ function(InstallCMakeConfig)
                                         message(AUTHOR_WARNING "Multiple configs not yet supported, got ${_configurations} and picked the first one")
                                     endif()
                                 endif()
-                            
-                                get_target_property(_dep_loc ${_dependency} IMPORTED_LOCATION${config})
-                            
-                                _get_default_link_name(${_dep_loc} _dep_name _dep_dir)
+
+                                if("${_type}" STREQUAL "STATIC_LIBRARY")
+                                    get_target_property(_dep_loc ${_dependency} IMPORTED_LOCATION${config})
+                                    _get_default_link_name(${_dep_loc} _dep_name _dep_dir)
+                                else()
+                                    get_target_property( _dep_name ${_dependency} NAME)
+                                    string(REPLACE "::" ";" vars ${_dep_name})
+                                    list(GET vars 0 _dep_name)
+                                endif()
+
                             else()
                                 get_target_property(_dep_name ${_dependency} OUTPUT_NAME)
-
                                 if(NOT _dep_name)
                                     get_target_property( _dep_name ${_dependency} NAME)
                                 endif()
@@ -428,9 +432,19 @@ function(InstallCMakeConfig)
                         
                             if(_dep_name)
                                 list(APPEND dependencies  ${_dep_name})
+                                unset(_dep_name)
                             endif()
                         endif()
-                   endif()
+                        get_target_property(_comp_iface ${_dependency} COMPATIBLE_INTERFACE_STRING)
+                   
+                        if(_comp_iface)
+                            foreach(_target ${_comp_iface})
+                                if("${_target}" MATCHES "${NAMESPACE}")
+                                    list(APPEND dependencies  ${_target})
+                                endif()  
+                            endforeach()
+                        endif()
+                    endif()
                 endforeach()
             endif()
         endif()
@@ -655,7 +669,6 @@ function(print_target_properties tgt)
     if(prop STREQUAL "LOCATION" OR prop MATCHES "^LOCATION_" OR prop MATCHES "_LOCATION$")
         continue()
     endif()
-        # message ("Checking ${prop}")
         get_property(propval TARGET ${tgt} PROPERTY ${prop} SET)
         if (propval)
             get_target_property(propval ${tgt} ${prop})
@@ -664,3 +677,64 @@ function(print_target_properties tgt)
     endforeach(prop)
 endfunction(print_target_properties)
 
+function(semicolon_safe_string StringVar)
+  string(ASCII 31 semicolon_code)
+  string(REPLACE  ";" "${semicolon_code}" SafeString "${${StringVar}}")
+  set(${StringVar} "${SafeString}" PARENT_SCOPE) 
+endfunction(semicolon_safe_string)
+
+function(InstallCompatibleCMakeConfig)
+    set(optionsArgs SKIP_PUBLIC_HEADERS)
+    set(oneValueArgs TARGET LEGACY_TARGET LEGACY_PUBLIC_HEADER_LOCATION LEGACY_INCLUDE_DIR)
+    set(multiValueArgs)
+
+    cmake_parse_arguments(Arg "${optionsArgs}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN} )
+
+    if(Argument_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "Unknown keywords given to InstallCMakeConfig(): \"${Arg_UNPARSED_ARGUMENTS}\".")
+    endif()
+
+    if(NOT Arg_LEGACY_TARGET OR NOT Arg_TARGET)
+        message(FATAL_ERROR "Missing keywords LEGACY_TARGET OR TARGET.")
+    endif()
+
+    if(NOT TARGET ${Arg_TARGET})
+        message(FATAL_ERROR "Target ${Arg_TARGET} is not a defined cmake target in this scope.")
+    endif()
+
+    if("${Arg_LEGACY_PUBLIC_HEADER_LOCATION}" STREQUAL "")
+        set(Arg_LEGACY_PUBLIC_HEADER_LOCATION "include")
+        message(STATUS "LEGACY_PUBLIC_HEADER_LOCATION was set to default '${Arg_LEGACY_PUBLIC_HEADER_LOCATION}'.")
+    endif()
+
+    if("${Arg_LEGACY_INCLUDE_DIR}" STREQUAL "")
+       set(Arg_LEGACY_INCLUDE_DIR "include")
+        message(STATUS "LEGACY_INCLUDE_DIR was set to default '${Arg_LEGACY_INCLUDE_DIR}'.")
+    endif()
+
+    add_library(${Arg_LEGACY_TARGET} INTERFACE)
+    add_library(${Arg_LEGACY_TARGET}::${Arg_LEGACY_TARGET} ALIAS ${Arg_LEGACY_TARGET})
+
+    target_link_libraries(${Arg_LEGACY_TARGET}
+                        INTERFACE ${Arg_TARGET}::${Arg_TARGET})
+
+    if(NOT Arg_SKIP_PUBLIC_HEADERS)
+        get_target_property(_headers ${Arg_TARGET} PUBLIC_HEADER)
+    
+        set_target_properties(${Arg_LEGACY_TARGET} PROPERTIES
+                        PUBLIC_HEADER "${_headers}" # specify the public headers
+                        )
+    endif()
+
+    set_target_properties(${Arg_LEGACY_TARGET} PROPERTIES
+                        COMPATIBLE_INTERFACE_STRING "${Arg_LEGACY_TARGET}"
+                        )
+    install(
+            TARGETS ${Arg_LEGACY_TARGET}
+            EXPORT ${Arg_LEGACY_TARGET}Targets
+            PUBLIC_HEADER DESTINATION ${Arg_LEGACY_PUBLIC_HEADER_LOCATION} COMPONENT devel
+            INCLUDES DESTINATION  ${Arg_LEGACY_INCLUDE_DIR} # default include path
+    )
+
+    installcmakeconfig(TARGETS ${Arg_LEGACY_TARGET} EXTRA_DEPENDENCIES  ${Arg_TARGET})
+endfunction(InstallCompatibleCMakeConfig)

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -179,7 +179,6 @@ namespace Core {
         clock_gettime(CLOCK_REALTIME, &structTime);
         structTime.tv_sec += nTimeSecs;
 
-
         // MF2018 please note: sem_timedwait is not compatible with CLOCK_MONOTONIC.
         int result = pthread_mutex_timedlock(&m_syncMutex, &structTime);
         if (result != 0) {
@@ -206,9 +205,11 @@ namespace Core {
             fprintf(stderr, "\nLocked location:\n");
             backtrace_symbols_fd(_LockingStack[stackArrayIndex], _UsedStackEntries[stackArrayIndex], fileno(stderr));
 
+            #if defined(THUNDER_BACKTRACE)
             fprintf(stderr, "\nCurrent stack of locking thread:\n");
             addressCount = ::GetCallStack(_LockingThread, addresses, _AllocatedStackEntries);
             backtrace_symbols_fd(addresses, _AllocatedStackEntries, fileno(stderr));
+            #endif
 
             _StdErrDumpMutex.Unlock();
 
@@ -252,8 +253,9 @@ namespace Core {
         TRACE_L5("Destructor CriticalSection <%p>", (this));
 
 #ifdef __POSIX__
-        if (pthread_mutex_destroy(&m_syncMutex) != 0) {
-            TRACE_L1("Probably trying to delete a used CriticalSection <%d>.", 0);
+        int result = pthread_mutex_destroy(&m_syncMutex);
+        if (result != 0) {
+            TRACE_L1("Probably trying to delete a used CriticalSection <%d>.", result);
         }
 #endif
 #ifdef __WINDOWS__
@@ -815,7 +817,7 @@ namespace Core {
 #endif
 
 #ifdef __WINDOWS__
-        m_syncEvent = ::CreateEvent(nullptr, blManualReset, blSet, nullptr);
+        m_syncEvent = ::CreateEvent(nullptr, TRUE, blSet, nullptr);
 
         ASSERT(m_syncEvent != nullptr);
 #endif
@@ -1018,7 +1020,12 @@ namespace Core {
 #endif
 
 #ifdef __WINDOWS__
-        ::SetEvent(m_syncEvent);
+        if (m_blManualReset == true) {
+            ::SetEvent(m_syncEvent);
+        }
+        else {
+            ::PulseEvent(m_syncEvent);
+        }
 #endif
     }
 

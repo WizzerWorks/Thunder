@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,8 @@ namespace WPEFramework {
 namespace Core {
 
     namespace JSON {
-
+        constexpr size_t kContextMaxLength = 80;
+        
         struct EXTERNAL Error {
             explicit Error(string&& message)
                 : _message(std::move(message))
@@ -74,8 +75,6 @@ namespace Core {
             {
             }
 
-            static constexpr size_t kContextMaxLength = 80;
-
             string _message;
             string _context;
             size_t _pos;
@@ -85,9 +84,11 @@ namespace Core {
 
         struct EXTERNAL IElement {
 
-            static char NullTag[];
+            static TCHAR NullTag[5];
+            static TCHAR TrueTag[5];
+            static TCHAR FalseTag[6];
 
-            virtual ~IElement() {}
+            virtual ~IElement() = default;
 
             template <typename INSTANCEOBJECT>
             static bool ToString(const INSTANCEOBJECT& realObject, string& text)
@@ -144,13 +145,14 @@ namespace Core {
                     handled += loaded;
                 }
 
-                if ((offset != 0 || handled < size) && error.IsSet() == false) {
+                if (((offset != 0) || (handled < size)) && (error.IsSet() == false)) {
                     error = Error{ "Malformed JSON. Missing closing quotes or brackets" };
                     realObject.Clear();
                 }
 
                 if (error.IsSet() == true) {
                     TRACE_L1("Parsing failed: %s", ErrorDisplayMessage(error.Value()).c_str());
+                    realObject.Clear();
                 }
 
                 return (error.IsSet() == false);
@@ -286,7 +288,7 @@ namespace Core {
         };
 
         struct EXTERNAL IMessagePack {
-            virtual ~IMessagePack() {}
+            virtual ~IMessagePack() = default;
 
             static constexpr uint8_t NullValue = 0xC0;
 
@@ -484,23 +486,32 @@ namespace Core {
                 , _default(0)
             {
             }
-
             NumberType(const TYPE Value, const bool set = false)
                 : _set(set ? SET : 0)
                 , _value(Value)
                 , _default(Value)
             {
             }
-
+            NumberType(NumberType<TYPE, SIGNED, BASETYPE>&& move) noexcept
+                : _set(std::move(move._set))
+                , _value(std::move(move._value))
+                , _default(std::move(move._default))
+            {
+            }
             NumberType(const NumberType<TYPE, SIGNED, BASETYPE>& copy)
                 : _set(copy._set)
                 , _value(copy._value)
                 , _default(copy._default)
             {
             }
+            ~NumberType() override = default;
 
-            ~NumberType() override
+            NumberType<TYPE, SIGNED, BASETYPE>& operator=(NumberType<TYPE, SIGNED, BASETYPE>&& move)
             {
+                _value = std::move(move._value);
+                _set = std::move(move._set);
+
+                return (*this);
             }
 
             NumberType<TYPE, SIGNED, BASETYPE>& operator=(const NumberType<TYPE, SIGNED, BASETYPE>& RHS)
@@ -537,15 +548,15 @@ namespace Core {
             void Null(const bool enabled)
             {
                 if (enabled == true)
-                    _set |= UNDEFINED;
+                    _set |= (SET | UNDEFINED);
                 else
-                    _set &= ~UNDEFINED;
+                    _set &= ~(SET | UNDEFINED);
             }
 
             // IElement and IMessagePack iface:
             bool IsSet() const override
             {
-                return ((_set & (SET | UNDEFINED)) != 0);
+                return ((_set & SET) != 0);
             }
 
             bool IsNull() const override
@@ -559,7 +570,6 @@ namespace Core {
                 _value = 0;
             }
 
-        private:
             // IElement iface:
             // If this should be serialized/deserialized, it is indicated by a MinSize > 0)
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
@@ -616,7 +626,7 @@ namespace Core {
                 if (((_set & UNDEFINED) == 0) && (loaded < maxLength)) {
                     loaded += Convert(&(stream[loaded]), (maxLength - loaded), offset, TemplateIntToType<SIGNED>());
                 }
-                   
+
                 if ((offset != 0) && (loaded < maxLength)) {
                     stream[loaded++] = '\"';
                     offset = 0;
@@ -629,13 +639,12 @@ namespace Core {
             {
                 uint16_t loaded = 0;
 
-                if (offset == 0) {
-                    // We are starting, see what the current char is
-                    _value = 0;
-                    _set = 0;
-                }
+                // Peamble investigation, determine the right flags..
                 while ((offset < 4) && (loaded < maxLength)) {
                     if (offset == 0) {
+                        _value = 0;
+                        _set = 0;
+
                         if (stream[loaded] == '\"') {
                             _set = QUOTED;
                             offset++;
@@ -721,7 +730,7 @@ namespace Core {
                     loaded++;
                 }
 
-                bool completed = ((_set & ERROR) != 0);
+                bool completed = ((_set & (ERROR|UNDEFINED)) != 0);
 
                 while ((loaded < maxLength) && (completed == false)) {
                     if (isdigit(stream[loaded])) {
@@ -752,7 +761,7 @@ namespace Core {
                             offset = 0;
                         }
                     }
-                } else if (completed == true) {
+                } else if ( (completed == true) && (offset >= 4) ) {
                     if (_set & NEGATIVE) {
                         _value *= -1;
                     }
@@ -811,6 +820,7 @@ namespace Core {
                 return (loaded);
             }
 
+        private:
             uint16_t Convert(char stream[], const uint16_t maxLength, uint32_t& offset, const TYPE serialize) const
             {
                 uint8_t parsed = 4;
@@ -969,6 +979,9 @@ namespace Core {
         typedef NumberType<uint64_t, false, BASE_OCTAL> OctUInt64;
         typedef NumberType<int64_t, true, BASE_OCTAL> OctSInt64;
 
+        typedef NumberType<Core::instance_id, false, BASE_HEXADECIMAL> InstanceId;
+        typedef InstanceId Pointer;
+
         template <class TYPE>
         class FloatType : public IElement, public IMessagePack {
         private:
@@ -985,25 +998,38 @@ namespace Core {
                 : _set(0)
                 , _value(0.0)
                 , _default(0.0)
+                , _strValue()
             {
             }
-
             FloatType(const TYPE Value, const bool set = false)
                 : _set(set ? SET : 0)
                 , _value(Value)
                 , _default(Value)
+                , _strValue()
             {
             }
-
+            FloatType(FloatType<TYPE>&& move)
+                : _set(std::move(move._set))
+                , _value(std::move(move._value))
+                , _default(std::move(move._default))
+                , _strValue()
+            {
+            }
             FloatType(const FloatType<TYPE>& copy)
                 : _set(copy._set)
                 , _value(copy._value)
                 , _default(copy._default)
+                , _strValue()
             {
             }
+            ~FloatType() override = default;
 
-            ~FloatType() override
+            FloatType<TYPE>& operator=(FloatType<TYPE>&& move)
             {
+                _value = std::move(move._value);
+                _set = std::move(move._set);
+
+                return (*this);
             }
 
             FloatType<TYPE>& operator=(const FloatType<TYPE>& RHS)
@@ -1040,15 +1066,15 @@ namespace Core {
             void Null(const bool enabled)
             {
                 if (enabled == true)
-                    _set |= UNDEFINED;
+                    _set |= (UNDEFINED|SET);
                 else
-                    _set &= ~UNDEFINED;
+                    _set &= ~(UNDEFINED|SET);
             }
 
             // IElement and IMessagePack iface:
             bool IsSet() const override
             {
-                return ((_set & (SET | UNDEFINED)) != 0);
+                return ((_set & SET) != 0);
             }
 
             bool IsNull() const override
@@ -1062,7 +1088,6 @@ namespace Core {
                 _value = 0;
             }
 
-        private:
             // IElement iface:
             // If this should be serialized/deserialized, it is indicated by a MinSize > 0)
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
@@ -1071,99 +1096,95 @@ namespace Core {
 
                 ASSERT(maxLength > 0);
 
-                if ((_set & UNDEFINED) != 0 || 
+                if ((_set & UNDEFINED) != 0 ||
                     std::isinf(_value) ||
-                    std::isnan(_value)) 
+                    std::isnan(_value))
                 {
-                    auto len = strlen(IElement::NullTag);
-                    ASSERT (offset < len);
-                    while(loaded < (len - offset))
-                    {
-                        stream[loaded] = IElement::NullTag[offset + loaded];
-                        loaded++;
-                    }
+                    ASSERT(offset < (sizeof(IElement::NullTag) - 1));
+                    loaded = std::min(static_cast<uint16_t>((sizeof(IElement::NullTag) - 1) - offset), maxLength);
+                    ::memcpy(stream, &(IElement::NullTag[offset]), loaded);
+                    offset = (((offset + loaded) == (sizeof(IElement::NullTag) - 1)) ? 0 : offset + loaded);
                 }
                 else
                 {
-                    auto num = std::snprintf(stream,maxLength,"%g",_value);
-                    loaded = num > 0 ? num : 0;
+                    loaded += Convert(stream, maxLength, offset);
                 }
-                
+
                 return loaded;
             }
-            
-            uint16_t Deserialize(const char stream[], const uint16_t, uint32_t& offset, Core::OptionalType<Error>& error) override
+
+            uint16_t Deserialize(const char stream[], const uint16_t maxLength, uint32_t& offset, Core::OptionalType<Error>& error) override
             {
                 uint16_t loaded = 0;
 
                 if (offset == 0) {
                     _value = 0;
                     _set = 0;
+                    _strValue.clear();
                 }
 
-                std::string str;
-
-                if (stream[loaded] == '\"') {
+                if ((stream[loaded] == '\"') && ((_set & QUOTED) == 0)) {
                     _set = QUOTED;
                     offset++;
                     loaded++;
                 }
 
-                while(stream[loaded] != '\"' && 
-                      stream[loaded] != ',' && 
-                      stream[loaded] != ']' && 
-                      stream[loaded] != '}' &&
-                      stream[loaded] != ')') {
-                    
-                    str += stream[loaded++];
+                bool completed = false;
 
-                }
+                while ((loaded < maxLength) && (completed == false)) {
 
-                if (stream[loaded] == '\"') {
-                    loaded++;
-                }
-
-                if(str == IElement::NullTag)
-                {
-                    _set |= UNDEFINED;
-                    return loaded;
+                    if (((_set & QUOTED) != 0) && (stream[loaded] == '\"')) {
+                        completed = true;
+                        loaded++;
+                        offset++;
+                        _set &= ~QUOTED;
+                    } else if ( (((_set & QUOTED) == 0) && (::isspace(stream[loaded]))) || (stream[loaded] == '\0') ||
+                               (stream[loaded] == ',') || (stream[loaded] == '}') || (stream[loaded] == ']') ) {
+                        completed = true;
+                    } else {
+                        _strValue += stream[loaded++];
+                        offset++;
+                    }
                 }
 
-                TYPE val;
-                char* end;
-                if(std::is_same<float,TYPE>::value)
-                {
-                    val = std::strtof(str.c_str(), &end);
-                }
-                else
-                {
-                    val = static_cast<TYPE>(std::strtod(str.c_str(), &end));
-                }
+                if (completed == true) {
 
-                if(end == str.c_str())
-                {
-                    error = Error{ "Error converting \"" + str + "\" to a float/double" };
-                    _set = ERROR;
+                    if (_strValue == IElement::NullTag) {
+                        _set |= (SET|UNDEFINED);
+
+                    } else {
+                        TYPE val;
+                        char* end;
+                        if (std::is_same<float,TYPE>::value) {
+                            val = std::strtof(_strValue.c_str(), &end);
+                        } else {
+                            val = static_cast<TYPE>(std::strtod(_strValue.c_str(), &end));
+                        }
+
+                        if (end == _strValue.c_str()) {
+                            error = Error{ "Error converting \"" + _strValue + "\" to a float/double" };
+                            _set = ERROR;
+                        } else {
+                            _value = val;
+                            _set |= SET;
+                        }
+
+                        _strValue.clear();
+                    }
+                    offset = 0;
                 }
-                else
-                {
-                    _value = val;
-                    _set |= SET;
-                }
-                
-                offset = 0;
 
                 return loaded;
             }
 
             // IMessagePack iface:
-            // Refer to https://github.com/msgpack/msgpack/blob/master/spec.md#float-format-family 
+            // Refer to https://github.com/msgpack/msgpack/blob/master/spec.md#float-format-family
             // for MessagePack format for float.
             uint16_t Serialize(uint8_t stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
-                if ((_set & UNDEFINED) != 0 || 
+                if ((_set & UNDEFINED) != 0 ||
                     std::isinf(_value) ||
-                    std::isnan(_value))  
+                    std::isnan(_value))
                 {
                     stream[0] = IMessagePack::NullValue;
                     return (1);
@@ -1229,14 +1250,40 @@ namespace Core {
             }
 
         private:
+            uint16_t Convert(char stream[], const uint16_t maxLength, uint32_t& offset) const
+            {
+                uint16_t loaded = 0;
+
+                if (_strValue.empty() == true) {
+                    char str[16];
+                    std::sprintf(str, "%g", _value);
+                    const_cast<FloatType*>(this)->_strValue = str;
+                }
+
+                while ((loaded < maxLength) && (offset < _strValue.size())) {
+                    stream[loaded] = _strValue[offset];
+                    loaded++;
+                    offset++;
+                }
+                if (offset == _strValue.size()) {
+                    offset = 0;
+                    const_cast<FloatType*>(this)->_strValue.clear();
+                }
+
+                return loaded;
+            }
+
+
+        private:
             uint16_t _set;
             TYPE _value;
             TYPE _default;
+            std::string _strValue;
         };
 
         typedef FloatType<float> Float;
         typedef FloatType<double> Double;
-        
+
         class EXTERNAL Boolean : public IElement, public IMessagePack {
         private:
             static constexpr uint8_t None = 0x00;
@@ -1258,13 +1305,24 @@ namespace Core {
             {
             }
 
+            Boolean(Boolean&& move) noexcept
+                : _value(std::move(move._value))
+            {
+            }
+
             Boolean(const Boolean& copy)
                 : _value(copy._value)
             {
             }
 
-            ~Boolean()
+            ~Boolean() override = default;
+
+            Boolean& operator=(Boolean&& move) noexcept
             {
+                // Do not overwrite the default, if not set...copy if set
+                _value = (move._value & (SetBit | ValueBit)) | ((move._value & (SetBit)) ? (move._value & DefaultBit) : (_value & DefaultBit));
+
+                return (*this);
             }
 
             Boolean& operator=(const Boolean& RHS)
@@ -1301,15 +1359,15 @@ namespace Core {
             void Null(const bool enabled)
             {
                 if (enabled == true)
-                    _value |= NullBit;
+                    _value |= (SetBit|NullBit);
                 else
-                    _value &= ~NullBit;
+                    _value &= ~(SetBit|NullBit);
             }
 
             // IElement and IMessagePack iface:
             bool IsSet() const override
             {
-                return ((_value & (SetBit | NullBit)) != 0);
+                return ((_value & SetBit) != 0);
             }
 
             bool IsNull() const override
@@ -1322,13 +1380,9 @@ namespace Core {
                 _value = (_value & DefaultBit);
             }
 
-        private:
             // IElement iface:
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
-                static constexpr char trueBuffer[] = "true";
-                static constexpr char falseBuffer[] = "false";
-
                 uint16_t loaded = 0;
                 if ((_value & NullBit) != 0) {
                     while ((loaded < maxLength) && (offset < 4)) {
@@ -1338,17 +1392,17 @@ namespace Core {
                         offset = 0;
                     }
                 } else if (Value() == true) {
-                    while ((loaded < maxLength) && (offset < (sizeof(trueBuffer) - 1))) {
-                        stream[loaded++] = trueBuffer[offset++];
+                    while ((loaded < maxLength) && (offset < (sizeof(IElement::TrueTag) - 1))) {
+                        stream[loaded++] = IElement::TrueTag[offset++];
                     }
-                    if (offset == (sizeof(trueBuffer) - 1)) {
+                    if (offset == (sizeof(IElement::TrueTag) - 1)) {
                         offset = 0;
                     }
                 } else {
-                    while ((loaded < maxLength) && (offset < (sizeof(falseBuffer) - 1))) {
-                        stream[loaded++] = falseBuffer[offset++];
+                    while ((loaded < maxLength) && (offset < (sizeof(IElement::FalseTag) - 1))) {
+                        stream[loaded++] = IElement::FalseTag[offset++];
                     }
-                    if (offset == (sizeof(falseBuffer) - 1)) {
+                    if (offset == (sizeof(IElement::FalseTag) - 1)) {
                         offset = 0;
                     }
                 }
@@ -1370,7 +1424,7 @@ namespace Core {
                         _value = (_value & DefaultBit);
                         offset = 1;
                         loaded = 1;
-                    } else if (stream[0] == 'n') {
+                    } else if (stream[0] == IElement::NullTag[0]) {
                         offset = 1;
                         _value = NullBit | (_value & DefaultBit);
                         loaded = 1;
@@ -1387,8 +1441,8 @@ namespace Core {
                 }
 
                 if (offset > 0) {
-                    uint8_t length = (_value & NullBit ? 4 : _value & DeserializeBit ? sizeof(trueBuffer) : sizeof(falseBuffer)) - 1;
-                    const char* buffer = (_value & NullBit ? IElement::NullTag : _value & DeserializeBit ? trueBuffer : falseBuffer);
+                    uint8_t length = (_value & NullBit ? sizeof(IElement::NullTag) : _value & DeserializeBit ? sizeof(IElement::TrueTag) : sizeof(IElement::FalseTag)) - 1;
+                    const char* buffer = (_value & NullBit ? IElement::NullTag : _value & DeserializeBit ? IElement::TrueTag : IElement::FalseTag);
 
                     while ((loaded < maxLength) && (offset < length) && ((_value & ErrorBit) == 0)) {
                         if (stream[loaded] != buffer[offset]) {
@@ -1445,47 +1499,42 @@ namespace Core {
 
         class EXTERNAL String : public IElement, public IMessagePack {
         private:
-            static constexpr uint32_t None = 0x00000000;
-            static constexpr uint32_t ScopeMask = 0x003FFFFF;
-            static constexpr uint32_t DepthCountMask = 0x07C00000;
-            static constexpr uint32_t EscapeFoundBit = 0x08000000;
-            static constexpr uint32_t QuotedSerializeBit = 0x80000000;
-            static constexpr uint32_t SetBit = 0x40000000;
-            static constexpr uint32_t QuoteFoundBit = 0x20000000;
-            static constexpr uint32_t NullBit = 0x10000000;
+            static constexpr uint16_t FlagMask = 0xFC00;
+            static constexpr uint16_t QuotedAreaBit = 0x0400;
+            static constexpr uint16_t SpecialSequenceBit = 0x0800;
+            static constexpr uint16_t QuotedSerializeBit = 0x1000;
+            static constexpr uint16_t QuoteFoundBit = 0x2000;
+            static constexpr uint16_t NullBit = 0x4000;
+            static constexpr uint16_t SetBit = 0x8000;
 
-            template <int N>
-            uint8_t MaxOpaqueObjectDepth()
-            {
-                return ((N >> 1) > 0) ? 1 + MaxOpaqueObjectDepth<(N >> 1)>() : 1;
-            }
-            const std::map<uint8_t, uint8_t> EscapeKeyLookupTable = {
-                {'b',0x08}, {'f', 0x0c}, {'n', 0x0a}, {'r', 0x0d}, {'t', 0x09}
+            enum class ScopeBracket : uint8_t {
+                CURLY_BRACKET = 0,
+                SQUARE_BRACKET = 1
             };
 
         public:
             explicit String(const bool quoted = true)
                 : _default()
-                , _scopeCount(quoted ? QuotedSerializeBit : None)
-                , _unaccountedCount(0)
                 , _value()
+                , _storage(0)
+                , _flagsAndCounters(quoted ? QuotedSerializeBit : 0)
             {
             }
 
             explicit String(const string& Value, const bool quoted = true)
                 : _default()
-                , _scopeCount(quoted ? QuotedSerializeBit : None)
-                , _unaccountedCount(0)
                 , _value()
+                , _storage(0)
+                , _flagsAndCounters(quoted ? QuotedSerializeBit : 0)
             {
                 Core::ToString(Value.c_str(), _default);
             }
 
             explicit String(const char Value[], const bool quoted = true)
                 : _default()
-                , _scopeCount(quoted ? QuotedSerializeBit : None)
-                , _unaccountedCount(0)
                 , _value()
+                , _storage(0)
+                , _flagsAndCounters(quoted ? QuotedSerializeBit : 0)
             {
                 Core::ToString(Value, _default);
             }
@@ -1493,30 +1542,36 @@ namespace Core {
 #ifndef __CORE_NO_WCHAR_SUPPORT__
             explicit String(const wchar_t Value[], const bool quoted = true)
                 : _default()
-                , _scopeCount(quoted ? QuotedSerializeBit : None)
-                , _unaccountedCount(0)
                 , _value()
+                , _storage(0)
+                , _flagsAndCounters(quoted ? QuotedSerializeBit : 0)
             {
                 Core::ToString(Value, _default);
             }
 #endif // __CORE_NO_WCHAR_SUPPORT__
 
-            String(const String& copy)
-                : _default(copy._default)
-                , _scopeCount(copy._scopeCount)
-                , _unaccountedCount(copy._unaccountedCount)
-                , _value(copy._value)
+            String(String&& move) noexcept
+                : _default(std::move(move._default))
+                , _value(std::move(move._value))
+                , _storage(std::move(move._storage))
+                , _flagsAndCounters(std::move(move._flagsAndCounters))
             {
             }
 
-            ~String() override
+            String(const String& copy)
+                : _default(copy._default)
+                , _value(copy._value)
+                , _storage(copy._storage)
+                , _flagsAndCounters(copy._flagsAndCounters)
             {
             }
+
+            ~String() override = default;
 
             String& operator=(const string& RHS)
             {
                 Core::ToString(RHS.c_str(), _value);
-                _scopeCount |= SetBit;
+                _flagsAndCounters |= SetBit;
 
                 return (*this);
             }
@@ -1524,7 +1579,7 @@ namespace Core {
             String& operator=(const char RHS[])
             {
                 Core::ToString(RHS, _value);
-                _scopeCount |= SetBit;
+                _flagsAndCounters |= SetBit;
 
                 return (*this);
             }
@@ -1533,18 +1588,26 @@ namespace Core {
             String& operator=(const wchar_t RHS[])
             {
                 Core::ToString(RHS, _value);
-                _scopeCount |= SetBit;
+                _flagsAndCounters |= SetBit;
 
                 return (*this);
             }
 #endif // __CORE_NO_WCHAR_SUPPORT__
 
+            String& operator=(String&& move) noexcept
+            {
+                _default = std::move(move._default);
+                _value = std::move(move._value);
+                _flagsAndCounters = std::move(move._flagsAndCounters);
+
+                return (*this);
+            }
+
             String& operator=(const String& RHS)
             {
                 _default = RHS._default;
                 _value = RHS._value;
-                _scopeCount = RHS._scopeCount;
-                _unaccountedCount = RHS._unaccountedCount;
+                _flagsAndCounters = RHS._flagsAndCounters;
 
                 return (*this);
             }
@@ -1605,10 +1668,10 @@ namespace Core {
 
             inline const string Value() const
             {
-                if ((_scopeCount & (SetBit | QuoteFoundBit | QuotedSerializeBit)) == (SetBit | QuoteFoundBit)) {
-                    return ('\"' + Core::ToString(_value.c_str()) + '\"');
+                if ((_flagsAndCounters & (SetBit | QuoteFoundBit | QuotedSerializeBit)) == (SetBit | QuoteFoundBit)) {
+                    return (Core::ToQuotedString('\"', _value));
                 }
-                return (((_scopeCount & (SetBit | NullBit)) == SetBit) ? Core::ToString(_value.c_str()) : Core::ToString(_default.c_str()));
+                return (((_flagsAndCounters & (SetBit | NullBit)) == SetBit) ? Core::ToString(_value.c_str()) : Core::ToString(_default.c_str()));
             }
 
             inline const string& Default() const
@@ -1616,132 +1679,187 @@ namespace Core {
                 return (_default);
             }
 
+            inline operator const string() const
+            {
+                return (Value());
+            }
+
             void Null(const bool enabled)
             {
-                if (enabled == true)
-                    _scopeCount |= NullBit;
-                else
-                    _scopeCount &= ~NullBit;
+                if (enabled == true) {
+                    _flagsAndCounters |= (NullBit | SetBit);
+                    _value = IElement::NullTag;
+                }
+                else {
+                    _flagsAndCounters &= ~(NullBit | SetBit);
+                    _value.clear();
+                }
             }
 
             // IElement iface:
             bool IsNull() const override
             {
-                return (_scopeCount & NullBit) != 0;
+                return (_flagsAndCounters & NullBit) != 0;
             }
 
             bool IsSet() const override
             {
-                return ((_scopeCount & (SetBit | NullBit)) != 0);
+                return ((_flagsAndCounters & SetBit) != 0);
             }
 
             void Clear() override
             {
-                _scopeCount = (_scopeCount & QuotedSerializeBit);
+                _flagsAndCounters = (_flagsAndCounters & QuotedSerializeBit);
+                _value.clear();
             }
 
             inline bool IsQuoted() const
             {
-                return ((_scopeCount & (QuotedSerializeBit | QuoteFoundBit)) != 0);
-            }
-
-            inline bool IsEscaped() const
-            {
-                return ((_scopeCount & EscapeFoundBit) != 0);
+                return (((_flagsAndCounters & NullBit) == 0) && ((_flagsAndCounters & (QuotedSerializeBit | QuoteFoundBit)) != 0));
             }
 
             inline void SetQuoted(const bool enable)
             {
                 if (enable == true) {
-                    _scopeCount |= QuotedSerializeBit;
-                } else {
-                    _scopeCount &= (~QuotedSerializeBit);
+                    _flagsAndCounters |= QuotedSerializeBit;
                 }
-            }
-
-            inline void SetEscaped(const bool enable)
-            {
-                if (enable == true) {
-                    _scopeCount |= EscapeFoundBit;
-                } else {
-                    _scopeCount &= (~EscapeFoundBit);
+                else {
+                    _flagsAndCounters &= (~QuotedSerializeBit);
                 }
-            }
-
-        protected:
-            inline bool MatchLastCharacter(const string& str, char ch) const
-            {
-                return (str.length() > 0) && (str[str.length() - 1] == ch);
             }
 
             // IElement iface:
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
-                bool quoted = IsQuoted();
                 uint16_t result = 0;
 
                 ASSERT(maxLength > 0);
 
-                if ((quoted == false) || ((_scopeCount & NullBit) != 0)) {
-                    std::string source((_value.empty() || (_scopeCount & NullBit)) ? NullTag : _value);
-                    result = static_cast<uint16_t>(source.copy(stream, maxLength, offset));
-                    offset = (result < maxLength ? 0 : offset + result);
-                } else {
-                    if (offset == 0) {
-                        // We always start with a quote or Block marker
-                        stream[result++] = '\"';
+                bool isQuoted = IsQuoted();
+                if ((_flagsAndCounters & SetBit) != 0 || (_value.empty() && isQuoted)) {
+                    if (offset == 0)  {
+                        if (isQuoted == true) {
+                            // We always start with a quote or Block marker
+                            stream[result++] = '\"';
+                        }
                         offset = 1;
-                        _unaccountedCount = 0;
+                        _flagsAndCounters &= (FlagMask ^ (SpecialSequenceBit| QuotedAreaBit));
                     }
 
                     uint32_t length = static_cast<uint32_t>(_value.length()) - (offset - 1);
-                    if (length > 0) {
-                        const TCHAR* source = &(_value[offset - 1]);
-                        offset += length;
 
-                        while ((result < maxLength) && (length > 0)) {
+                    while ((result < maxLength) && (length > 0)) {
+                        const uint16_t current = static_cast<uint16_t>((_value[offset - 1]) & 0xFF);
 
-                            // See where we are and add...
-                            if (((*source == '\"') || (*source == '\\')) && (_unaccountedCount == 0)) {
-                                stream[result++] = '\\';
-                                _unaccountedCount = 1;
-                            }
-                            
-                            if (result < maxLength) {
+                        // See if this is a printable character
+                        if ((isQuoted == false) || ((::isprint(current)) && (current != '\"') && (current != '\\') && (current != '/')) ) {
+                            stream[result++] = static_cast<TCHAR>(current);
+                            length--;
+                            offset++;
+                        }
+                        else if ((_flagsAndCounters & SpecialSequenceBit) == 0) {
+                            // We need to escape these..
+                            stream[result++] = '\\';
+                            _flagsAndCounters |= SpecialSequenceBit;
+                        }
+                        else if ((_flagsAndCounters & 0xFF) == 0x00) {
+                            // Check if it is a single character drop or a \u
+                            switch (current) {
+                            case 0x08: stream[result++] = 'b'; break;
+                            case 0x09: stream[result++] = 't'; break;
+                            case 0x0a: stream[result++] = 'n'; break;
+                            case 0x0c: stream[result++] = 'f'; break;
+                            case 0x0d: stream[result++] = 'r'; break;
+                            case '\\': stream[result++] = '\\'; break;
+                            case '/': stream[result++] = '/'; break;
+                            case '"': stream[result++] = '"'; break;
+                            default: {
+                                uint16_t lowPart, highPart;
+                                int8_t codeSize = ToCodePoint(&(_value[offset - 1]), length, _storage);
 
-                                char convertedValue = IsEscapeSequenceValue(*source);
-                                if (convertedValue != *source) {
-                                    if (IsEscaped() == false) {
-                                        stream[result++] = '\\';
-                                        const_cast<String*>(this)->SetEscaped(true);
-                                    }
-                                    if (result < maxLength) {
-                                        stream[result++] = convertedValue;
-                                        length--;
-                                        const_cast<String*>(this)->SetEscaped(false);
-                                    }
-                                } else {
-                                    stream[result++] = *source;
-                                    length--;
+                                if (codeSize < 0) {
+                                    // Oops it is a bad code thingy, Skip it..
+                                    // TODO: report an error
+                                    codeSize = -codeSize;
                                 }
-                                source++;
-                                _unaccountedCount = 0;
+
+                                ASSERT(codeSize <= 7);
+
+                                if (CodePointToUTF16(_storage, lowPart, highPart) == false) {
+                                    // Oops we have a bad transaltion of the code point
+                                    // TODO: report an error
+                                }
+
+                                _storage = (highPart << 16) | lowPart;
+
+                                // Oke start processing an escape squence and remember how many bytes we jump if
+                                // we are completed, start at 2 index now as we already wrote /u
+                                _flagsAndCounters |= ((codeSize & 0x07) << 3) | 0x02;
+
+                                stream[result++] = 'u';
+                                break;
+                            }
+                            }
+
+                            // If all has been writeen it is time to move back to the "copying situation...
+                            if ((_flagsAndCounters & 0xFF) == 0x00) {
+                                _flagsAndCounters ^= SpecialSequenceBit;
+                                length--;
+                                offset++;
+                            }
+                        }
+                        else {
+                            if ((_flagsAndCounters & 0x7) < 0x2) {
+                                stream[result++] = ((_flagsAndCounters & 0x07) == 0 ? '\\' : 'u');
+                            }
+                            else {
+                                uint8_t part;
+
+                                // Write out the CodePoint....
+                                if (_storage > 0xFFFF) {
+                                    // First write the Most Significant part
+                                    part = (_storage >> (16 + ((5 - (_flagsAndCounters & 0x07)) * 4))) & 0x0F;
+                                }
+                                else {
+                                    part = (_storage >> ((5 - (_flagsAndCounters & 0x07)) * 4)) & 0x0F;
+                                }
+                                stream[result++] = (part > 9 ? 'A' + (part - 10) : '0' + part);
+                            }
+
+                            _flagsAndCounters += 1;
+
+                            if ((_flagsAndCounters & 0x7) == 6) {
+                                // Oke we flushed a HEX value of 4 digits, lets determine the next step..
+                                if (_storage > 0xFFFF) {
+                                    _storage = (_storage & 0xFFFF);
+                                    _flagsAndCounters &= (FlagMask | 0xF8);
+                                }
+                                else {
+                                    // We are done ! Move on, strange character has been handled and converted
+                                    uint8_t skip = ((_flagsAndCounters >> 3) & 0x07);
+                                    length -= skip;
+                                    offset += skip;
+
+                                    _flagsAndCounters &= (FlagMask ^ SpecialSequenceBit);
+                                }
                             }
                         }
                     }
 
-                    if (result == maxLength) {
-                        offset -= length;
-                    } else {
+                    if (length == 0) {
                         // And we close with a quote..
-                        stream[result++] = '\"';
-                        offset = 0;
+                        if (isQuoted == false) {
+                            offset = 0;
+                        }
+                        else if (result < maxLength) {
+                            stream[result++] = '\"';
+                            offset = 0;
+                        }
                     }
                 }
 
                 return (result);
             }
-
             uint16_t Deserialize(const char stream[], const uint16_t maxLength, uint32_t& offset, Core::OptionalType<Error>& error) override
             {
                 bool finished = false;
@@ -1750,114 +1868,165 @@ namespace Core {
 
                 if (offset == 0) {
                     _value.clear();
-                    if (stream[result] != '\"') {
-                        _unaccountedCount = 0;
-                    } else {
+                    _flagsAndCounters &= (FlagMask ^ (SpecialSequenceBit|QuotedAreaBit|QuoteFoundBit));
+                    _storage = 0;
+                    if (stream[result] == '\"') {
                         result++;
-                        _scopeCount |= QuoteFoundBit;
-                        _unaccountedCount = 1;
+                        _flagsAndCounters |= QuoteFoundBit;
                     }
+                    offset = 1;
                 }
-
-                bool escapedSequence = MatchLastCharacter(_value, '\\');
 
                 // Might be that the last character we added was a
                 while ((result < maxLength) && (finished == false)) {
 
                     TCHAR current = stream[result];
 
-                    if (escapedSequence == false) {
-                        // Do not interpret anything if it's quoted.
-                        if ((_scopeCount & QuoteFoundBit) != 0) {
-                            if (current == '\"') {
-                                uint8_t depth = static_cast<uint8_t>((_scopeCount & DepthCountMask) >> MaxOpaqueObjectDepth<ScopeMask>());
-                                if (depth == 0) {
-                                    result++;
-                                    finished = true;
-                                } else {
-                                    _scopeCount = ((_scopeCount ^ QuoteFoundBit) & ~DepthCountMask) | ((depth - 1) << MaxOpaqueObjectDepth<ScopeMask>());
-                                }                                
-                            }
-                        } else if (current == '\"') {
-                            _scopeCount = ((_scopeCount ^ QuoteFoundBit) & (~DepthCountMask)) | (((_scopeCount & DepthCountMask) + (1 << MaxOpaqueObjectDepth<ScopeMask>())) & DepthCountMask);
-                        } 
-                        else {
-                            uint8_t depth = ((_scopeCount & DepthCountMask) >> MaxOpaqueObjectDepth<ScopeMask>());
-                            if ((current == '{') || (current == '[')) {
-                                if (depth + 1 > MaxOpaqueObjectDepth<ScopeMask>()) {
+                    // What are we deserializing a string, or an opaque JSON object!!!
+                    if ((_flagsAndCounters & QuoteFoundBit) == 0) {
+
+                        if ((_flagsAndCounters & QuotedAreaBit) == 0) {
+                            // It's an opaque structure, so *no* decoding required. Leave as is !
+                            if (current == '{') {
+                                if (InScope(ScopeBracket::CURLY_BRACKET) == false) {
                                     error = Error{ "Opaque object nesting too deep" };
-                                    finished = true;
-                                } else {
-                                    ++depth;
-                                    uint32_t scope = _scopeCount & ScopeMask;
-                                    scope <<= 1;
-                                    scope |= static_cast<uint32_t>(current == '{' ? ScopeBracket::CURLY_BRACKET : ScopeBracket::SQUARE_BRACKET);
-                                    _scopeCount &= ~(DepthCountMask | ScopeMask);
-                                    _scopeCount |= (depth << MaxOpaqueObjectDepth<ScopeMask>()) | scope;
                                 }
-                            } else if ((current == '}') || (current == ']')) {
-                                if (depth > 0) {
-                                    uint32_t scope = _scopeCount & ScopeMask;
-                                    ScopeBracket bracket = static_cast<ScopeBracket>(scope & 0x1);
-                                    if ((current == '}') && (bracket != ScopeBracket::CURLY_BRACKET)) {
-                                        error = Error{ "Expected \"]\" but got \"}\" in opaque object" };
-                                        finished = true;
-                                    } else if ((current == ']') && (bracket != ScopeBracket::SQUARE_BRACKET)) {
-                                        error = Error{ "Expected \"}\" but got \"]\" in opaque object" };
-                                        finished = true;
-                                    } else {
-                                        --depth;
-                                        scope >>= 1;
-                                        _scopeCount &= ~(DepthCountMask | ScopeMask);
-                                        _scopeCount |= (depth << MaxOpaqueObjectDepth<ScopeMask>()) | scope;
-                                    }
-                                } else {
-                                    finished = true;
-                                }
-                            } else if (depth == 0) {
-                                finished = ((current == ',') || (current == ' ') || (current == '\t') || (current == '\0'));
                             }
+                            else if (current == '[') {
+                                if (InScope(ScopeBracket::SQUARE_BRACKET) == false) {
+                                    error = Error{ "Opaque object nesting too deep" };
+                                }
+                            }
+                            else if ((_flagsAndCounters & 0x1F) == 0) {
+                                // We are not in a nested area, see what 
+                                finished = ((current == ',') || (current == '}') || (current == ']') || (current == '\0') || (!_value.empty() && ::isspace(current)));
+                            }
+                            else if (current == '}') {
+                                if (OutScope(ScopeBracket::CURLY_BRACKET) == false) {
+                                    error = Error{ "Expected \"]\" but got \"}\" in opaque object" };
+                                }
+                            }
+                            else if (current == ']') {
+                                if (OutScope(ScopeBracket::SQUARE_BRACKET) == false) {
+                                    error = Error{ "Expected \"}\" but got \"]\" in opaque object" };
+                                }
+                            }
+                        }
+
+                        if (finished == false) {
+                            if ((_flagsAndCounters & QuotedAreaBit) != 0) {
+                                // Write the amount we possibly can..
+                                _value += current;
+                            }
+                            else if (::isspace(current) == false) {
+                                // If we are creating an opaque string, drop all whitespaces if possible.
+                                _value += current;
+
+                                // See if we are done, if this is the last close marker, we bail out..
+                                finished = (((_flagsAndCounters & 0x1F) == 0) && ((current == '}') || (current == ']')));
+                            }
+
+                            // We are assumed to be opaque, but all quoted string stuff is enclosed between quotes
+                            // and should be considered for scope counting.
+                            // Check if we are entering or leaving a quoted area in the opaque object
+                            if ((current == '\"') && ((_value.empty() == true) || (_value[_value.length() - 1] != '\\'))) {
+                                // This is not an "escaped" quote, so it should be considered a real quote. It means
+                                // we are now entering or leaving a quoted area within the opaque struct...
+                                _flagsAndCounters ^= QuotedAreaBit;
+                            }
+
+                            result++;
                         }
                     }
-
-                    if (finished == false) {
-                        EscapeSequenceAction escapeHandling = EscapeSequenceAction::NOTHING;
-
-                        if ((escapedSequence == true) && ((_scopeCount & DepthCountMask) == 0)) {
-                            if ((current == '\\') && (_value[_value.length() - 1] == '\\')) {
-                                escapeHandling = EscapeSequenceAction::COLLAPSE;
-                            } else if (!IsValidEscapeSequence(current)) {
-                                finished = true;
-                                error = Error{ "Invalid escape sequence \"\\" + std::string(1, current) + "\"." };
-                                ++result;
-                                break;
-                            } else {
-                                escapeHandling = GetEscapeSequenceAction(current);
-                            }
-                        }
-
-                        escapedSequence = ((escapedSequence == 0) && (current == '\\') && (escapeHandling != EscapeSequenceAction::COLLAPSE));
-                        if (escapeHandling == EscapeSequenceAction::COLLAPSE) {
-                            _value[_value.length() - 1] = current;
-                            ++_unaccountedCount;
-                        } else if (escapeHandling == EscapeSequenceAction::REPLACE) {
-                            _value[_value.length() - 1] = GetEscapeSequenceValue(current);
+                    // Since it is a "real" string translate back all escaped stuff.. are we in an unescaping mode?
+                    else if ((_flagsAndCounters & SpecialSequenceBit) == 0x00) {
+                        // Nope we are not, so see if we need to start it and otherwise, just copy...
+                        if (current == '\\') {
+                            // And we need to start it.
+                            _flagsAndCounters |= SpecialSequenceBit;
+                        } else if (current == '\"') {
+                            // We are done! leave this element.
+                            finished = true;
+                        } else if (current <= 0x1F) {
+                            error = Error{ "Unescaped control character detected" };
                         } else {
-                            // Write the amount we possibly can..
+                            // Just copy and onto the next;
                             _value += current;
                         }
-
-
-                        // Move on to the next position
                         result++;
+                    }
+                    else if ((_flagsAndCounters & 0xFF) == 0x00) {
+
+                        if (current == 'u') {
+                            _flagsAndCounters |= 0x4;
+                        }
+                        else {
+                            // We are in a string mode, so we need to decode. Decode what we receive..
+                            switch (current) {
+                            case '\"': _value += '\"'; break;
+                            case '\\': _value += '\\'; break;
+                            case '/':  _value += '/';  break;
+                            case 'b':  _value += static_cast<TCHAR>(0x08); break;
+                            case 't':  _value += static_cast<TCHAR>(0x09); break;
+                            case 'n':  _value += static_cast<TCHAR>(0x0a); break;
+                            case 'f':  _value += static_cast<TCHAR>(0x0c); break;
+                            case 'r':  _value += static_cast<TCHAR>(0x0d); break;
+                            default:
+                                error = Error{ "unknown escaping code." };
+                                break;
+                            }
+                            _flagsAndCounters ^= SpecialSequenceBit;
+                        }
+                        result++;
+                    }
+                    else {
+                        // If we end up here, we are actually gathering unicode values to be decoded.
+                        _flagsAndCounters--;
+
+                        if (::isxdigit(current) == false) {
+                            error = Error{ "the unescaping of the u requires hexadecimal characters" };
+                        }
+                        else {
+                            _storage = (_storage << 4) | ((::isdigit(current) ? current - '0' : 10 + (::toupper(current) - 'A')) & 0xF);
+                            result++;
+                            if ((_flagsAndCounters & 0xFF) == 0x00) {
+                                _flagsAndCounters ^= SpecialSequenceBit;
+
+                                // Examine the codePoint, if ot is a pair ot not..
+                                if ( (_storage >= 0xFFFF) || ((_storage & 0xFC00) != 0xD800) ) {
+
+                                    // We have a full monty, 2 x UTF16 to be translated :-)
+                                    uint32_t codePoint;
+                                    TCHAR buffer[6];
+
+                                    UTF16ToCodePoint((_storage & 0xFFFF), ((_storage >> 16) & 0xFFFF), codePoint);
+
+                                    // Seems like we have a pending code point to be added, before we add anaything elese :-)
+                                    int8_t bytes = FromCodePoint(codePoint, buffer, sizeof(buffer));
+
+                                    if (bytes <= 0) {
+                                        error = Error{ "There is no valid codepoint defined." };
+                                    }
+                                    else {
+                                        _value += string(buffer, bytes);
+                                    }
+                                    _storage = 0;
+                                }
+                            }
+                        }
                     }
                 }
 
-                if (finished == false) {
-                    offset = static_cast<uint32_t>(_value.length()) + _unaccountedCount;
+                if ( (finished == false) && (error.IsSet() == false) ) {
+                    offset += static_cast<uint32_t>(_value.length()) ;
                 } else {
                     offset = 0;
-                    _scopeCount |= ((_scopeCount & QuoteFoundBit) ? SetBit : (_value == NullTag ? NullBit : SetBit));
+                    _flagsAndCounters |= (_value == IElement::NullTag ? NullBit|SetBit : SetBit);
+
+                    if ((_flagsAndCounters & QuoteFoundBit) == 0) {
+                        // Right-trim the non-string value, it's always left-trimmed already
+                        _value.erase(std::find_if(_value.rbegin(), _value.rend(), [](const unsigned char ch) { return (!std::isspace(ch)); }).base(), _value.end());
+                    }
                 }
 
                 return (result);
@@ -1868,18 +2037,18 @@ namespace Core {
             {
                 uint16_t loaded = 0;
                 if (offset == 0) {
-                    if ((_scopeCount & NullBit) != 0) {
+                    if ((_flagsAndCounters & NullBit) != 0) {
                         stream[loaded++] = IMessagePack::NullValue;
                     } else if (_value.length() <= 31) {
-                        _unaccountedCount = 1;
+                        _storage = 1;
                         stream[loaded++] = static_cast<uint8_t>(_value.length() | 0xA0);
                         offset++;
                     } else if (_value.length() <= 0xFF) {
-                        _unaccountedCount = 2;
+                        _storage = 2;
                         stream[loaded++] = 0xD9;
                         offset++;
                     } else if (_value.length() <= 0xFFFF) {
-                        _unaccountedCount = 3;
+                        _storage = 3;
                         stream[loaded++] = 0xDA;
                         offset++;
                     } else {
@@ -1888,19 +2057,19 @@ namespace Core {
                 }
 
                 if (offset != 0) {
-                    while ((loaded < maxLength) && (offset < _unaccountedCount)) {
-                        stream[loaded++] = static_cast<uint8_t>((_value.length() >> (8 * (_unaccountedCount - offset - 1))) & 0xFF);
+                    while ((loaded < maxLength) && (offset < (_storage & 0x0F))) {
+                        stream[loaded++] = static_cast<uint8_t>((_value.length() >> (8 * ( (_storage & 0x0F) - offset - 1))) & 0xFF);
                         offset++;
                     }
 
                     uint16_t copied = 0;
                     while ((loaded < maxLength) && (offset != 0)) {
-                        copied = static_cast<uint16_t>(_value.copy(reinterpret_cast<char*>(&stream[loaded]), (maxLength - loaded), offset - _unaccountedCount));
+                        copied = static_cast<uint16_t>(_value.copy(reinterpret_cast<char*>(&stream[loaded]), (maxLength - loaded), offset - (_storage & 0x0F)));
                         offset += copied;
                         loaded += copied;
-                        if (_unaccountedCount) {
-                           offset -=_unaccountedCount;
-                           _unaccountedCount = 0;
+                        if ((_storage & 0x0F) != 0) {
+                           offset -= (_storage & 0x0F);
+                           _storage = 0;
                         }
 
                         if (offset >= _value.length()) {
@@ -1918,18 +2087,18 @@ namespace Core {
                 if (offset == 0) {
                     _value.clear();
                     if (stream[loaded] == IMessagePack::NullValue) {
-                        _scopeCount |= NullBit;
+                        _flagsAndCounters |= NullBit;
                         loaded++;
                     } else if ((stream[loaded] & 0xA0) == 0xA0) {
-                        _unaccountedCount = stream[loaded] & 0x1F;
+                        _storage = stream[loaded] & 0x1F;
                         offset = 3;
                         loaded++;
                     } else if (stream[loaded] == 0xD9) {
-                        _unaccountedCount = 0;
+                        _storage = 0;
                         offset = 2;
                         loaded++;
                     } else if (stream[loaded] == 0xDA) {
-                        _unaccountedCount = 0;
+                        _storage = 0;
                         offset = 1;
                         loaded++;
                     } else {
@@ -1939,18 +2108,18 @@ namespace Core {
 
                 if (offset != 0) {
                     while ((loaded < maxLength) && (offset < 3)) {
-                        _unaccountedCount = (_unaccountedCount << 8) + stream[loaded++];
+                        _storage = (_storage << 8) + stream[loaded++];
                         offset++;
                     }
 
-                    while ((loaded < maxLength) && ((offset - 3) < static_cast<uint16_t>(_unaccountedCount))) {
+                    while ((loaded < maxLength) && ((offset - 3) < static_cast<uint16_t>(_storage))) {
                         _value += static_cast<char>(stream[loaded++]);
                         offset++;
                     }
 
-                    if ((offset >= 3) && (static_cast<uint16_t>(offset - 3) == _unaccountedCount)) {
+                    if ((offset >= 3) && (static_cast<uint16_t>(offset - 3) == _storage)) {
                         offset = 0;
-                        _scopeCount |= ((_scopeCount & QuoteFoundBit) ? SetBit : (_value == NullTag ? NullBit : SetBit));
+                        _flagsAndCounters |= ((_flagsAndCounters & QuoteFoundBit) ? SetBit : (_value == NullTag ? NullBit : SetBit));
                     }
                 }
 
@@ -1958,75 +2127,46 @@ namespace Core {
             }
 
         private:
-            bool IsValidEscapeSequence(char current) const
-            {
-                ASSERT(MatchLastCharacter(_value, '\\') == true);
-                // Any character may be escaped using \uXXXX. The serlializer should escape
-                // control chars with values less that 0x1F using this convention. Also serializer
-                // should change '"' '\' '\n' '\t' '\f' '\r' '\f' to
-                // '\''"' '\''\' '\''n' '\''t' '\''f' '\''r' '\''f' and deserisalizer has to change tham back
-                return (current == '"') || (EscapeKeyLookupTable.find(current) != EscapeKeyLookupTable.end());
-            }
+            bool InScope(const ScopeBracket mode) {
+                bool added = false;
+                uint8_t depth = (_flagsAndCounters & 0x1F);
 
-            enum class EscapeSequenceAction {
-                NOTHING,
-                COLLAPSE,
-                REPLACE
-            };
-
-            char GetEscapeSequenceValue(const char current) const
-            {
-                char value = 0;
-                const auto index = EscapeKeyLookupTable.find(current);
-                if (index != EscapeKeyLookupTable.end()) {
-                    value = index->second;
+                if ( ((depth != 0) || (_value.empty() == true)) && ((depth + 1) <= 31) ) {
+                    _storage <<= 1;
+                    _storage |= static_cast<uint8_t>(mode);
+                    _flagsAndCounters++;
+                    added = true;
                 }
-
-                return value;
+                return (added);
             }
-
-            EscapeSequenceAction GetEscapeSequenceAction(const char current) const
-            {
-
-                EscapeSequenceAction action = EscapeSequenceAction::COLLAPSE;
-                const auto index = EscapeKeyLookupTable.find(current);
-                if (index != EscapeKeyLookupTable.end()) {
-                    action = EscapeSequenceAction::REPLACE;
-                } else if((current == '\"') && (_scopeCount & DepthCountMask)) {
-                    action = EscapeSequenceAction::NOTHING;
+            bool OutScope(const ScopeBracket mode) {
+                bool succcesfull = false;
+                ScopeBracket bracket = static_cast<ScopeBracket>(_storage & 0x1);
+                uint8_t depth = (_flagsAndCounters & 0x1F);
+                if ((depth > 0) && (bracket == mode)) {
+                    _storage >>= 1;
+                    _flagsAndCounters--;
+                    succcesfull = true;
                 }
-                return action;
+                return (succcesfull);
             }
 
-            char IsEscapeSequenceValue(const char current) const
-            {
-                char value = current;
-                for (const auto& index : EscapeKeyLookupTable) {
-                    if (index.second == current) {
-                        value = index.first;
-                        break;
-                    }
-                }
 
-                return value;
-            }
-            enum class ScopeBracket : bool {
-                CURLY_BRACKET = 0,
-                SQUARE_BRACKET = 1
-            };
-
+        private:
             std::string _default;
-            // The value stores the following BITS:
-            // | 5  | 5  |         22         |
-            // FFFFFDDDDDSSSSSSSSSSSSSSSSSSSSSS
-            // Where:
-            // F are flags bits (Null, Set etc.)
-            // D are depth value bits
-            // S bits keep scope stack.
-            // This constrains the maximal depth of the opaque object to be 22.
-            uint32_t _scopeCount;
-            mutable uint32_t _unaccountedCount;
             std::string _value;
+
+            mutable uint32_t _storage;
+
+            // The value stores the following BITS:
+            // | 8 | 2 |  3  |  3  |
+            //   F   U   LLL   III
+            // Where:
+            // F are flags bits (See statics at the beginning of the class)
+            // U is unused
+            // L Length of the bytes under process (8)
+            // I Index to the written bytes (8).
+            mutable uint16_t _flagsAndCounters;
         };
 
         class EXTERNAL Buffer : public IElement, public IMessagePack {
@@ -2048,11 +2188,69 @@ namespace Core {
             {
             }
 
-            ~Buffer() override
+            Buffer(Buffer&& move) noexcept
+                : _state(std::move(move._state))
+                , _lastStuff(std::move(move._lastStuff))
+                , _index(std::move(move._index))
+                , _length(std::move(move._length))
+                , _maxLength(std::move(move._maxLength))
+                , _buffer(std::move(move._buffer))
+            {
+                move._buffer = nullptr;
+            }
+
+            Buffer(const Buffer& copy)
+                : _state(copy._state)
+                , _lastStuff(copy._lastStuff)
+                , _index(copy._index)
+                , _length(copy._length)
+                , _maxLength(copy._maxLength)
+                , _buffer(reinterpret_cast<uint8_t*>(::malloc(_maxLength)))
+            {
+                ASSERT(_length <= _maxLength);
+                ASSERT(_buffer != nullptr);
+
+                if (_buffer != nullptr) {
+                    ::memcpy(_buffer, copy._buffer, _length);
+                }
+            }
+
+           ~Buffer() override
             {
                 if (_buffer != nullptr) {
                     ::free(_buffer);
                 }
+            }
+
+            Buffer& operator= (Buffer&& move) noexcept {
+                _state = std::move(move._state);
+                _lastStuff = std::move(move._lastStuff);
+                _index = std::move(move._index);
+                _length = std::move(move._length);
+                _maxLength = std::move(move._maxLength);
+                _buffer = std::move(move._buffer);
+
+                move._buffer = nullptr;
+
+                return (*this);
+            }
+
+            Buffer& operator=(const Buffer& copy) {
+                _state = copy._state;
+                _lastStuff = copy._lastStuff;
+                _index = copy._index;
+                _length = copy._length;
+                _maxLength = copy._maxLength;
+                _buffer = reinterpret_cast<uint8_t*>(::malloc(_maxLength));
+
+                ASSERT(_length <= _maxLength);
+                ASSERT(_buffer != nullptr);
+
+                if (_buffer != nullptr) {
+                    ::memcpy(_buffer, copy._buffer, _length);
+                }
+
+                return (*this);
             }
 
             void Null(const bool enabled)
@@ -2080,7 +2278,6 @@ namespace Core {
                 _length = 0;
             }
 
-        protected:
             // IElement iface:
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
@@ -2208,34 +2405,56 @@ namespace Core {
 
                             // See if we can still add a character
                             if (_index == _maxLength) {
-                                _maxLength = (2 * _maxLength);
-                                _buffer = reinterpret_cast<uint8_t*>(::realloc(_buffer, _maxLength));
+                                uint16_t maxLength = (2 * _maxLength);
+                                uint8_t* newBuffer = reinterpret_cast<uint8_t*>(::realloc(_buffer, maxLength));
+                                if (newBuffer != nullptr) {
+                                    _buffer = newBuffer;
+                                    _maxLength = maxLength;
+                                }
                             }
 
-                            if (_state == 0) {
-                                _lastStuff = converted << 2;
-                                _state = 1;
-                            } else if (_state == 1) {
-                                _buffer[_index++] = (((converted & 0x30) >> 4) | _lastStuff);
-                                _lastStuff = ((converted & 0x0F) << 4);
-                                _state = 2;
-                            } else if (_state == 2) {
-                                _buffer[_index++] = (((converted & 0x3C) >> 2) | _lastStuff);
-                                _lastStuff = ((converted & 0x03) << 6);
-                                _state = 3;
-                            } else if (_state == 3) {
-                                _buffer[_index++] = ((converted & 0x3F) | _lastStuff);
-                                _state = 0;
+                            if (_index >= _maxLength) {
+                                TRACE_L1("Out of memory !!!!");
+                            }
+                            else {
+                                if (_state == 0) {
+                                    _lastStuff = converted << 2;
+                                    _state = 1;
+                                }
+                                else if (_state == 1) {
+                                    _buffer[_index++] = (((converted & 0x30) >> 4) | _lastStuff);
+                                    _lastStuff = ((converted & 0x0F) << 4);
+                                    _state = 2;
+                                }
+                                else if (_state == 2) {
+                                    _buffer[_index++] = (((converted & 0x3C) >> 2) | _lastStuff);
+                                    _lastStuff = ((converted & 0x03) << 6);
+                                    _state = 3;
+                                }
+                                else if (_state == 3) {
+                                    _buffer[_index++] = ((converted & 0x3F) | _lastStuff);
+                                    _state = 0;
+                                }
+
                             }
                         }
 
                         if (((_state & SET) == SET) && ((_state & 0xF) != 0)) {
 
                             if (_index == _maxLength) {
-                                _maxLength = _maxLength + 0xFF;
-                                _buffer = reinterpret_cast<uint8_t*>(::realloc(_buffer, _maxLength));
+                                uint16_t maxLength = (_maxLength + 0xFF);
+                                uint8_t* newBuffer = reinterpret_cast<uint8_t*>(::realloc(_buffer, maxLength));
+                                if (newBuffer != nullptr) {
+                                    _buffer = newBuffer;
+                                    _maxLength = maxLength;
+                                }
                             }
-                            _buffer[_index++] = _lastStuff;
+                            if (_index < _maxLength) {
+                                _buffer[_index++] = _lastStuff;
+                            }
+                            else {
+                                TRACE_L1("Out of Memory!!!!");
+                            }
                         }
                     }
                 }
@@ -2358,6 +2577,13 @@ namespace Core {
             {
             }
 
+            EnumType(EnumType<ENUMERATE>&& move) noexcept
+                : _state(std::move(move._state))
+                , _value(std::move(move._value))
+                , _default(std::move(move._default))
+            {
+            }
+
             EnumType(const EnumType<ENUMERATE>& copy)
                 : _state(copy._state)
                 , _value(copy._value)
@@ -2365,8 +2591,13 @@ namespace Core {
             {
             }
 
-            ~EnumType() override
+            ~EnumType() override = default;
+
+            EnumType<ENUMERATE>& operator=(EnumType<ENUMERATE>&& move)
             {
+                _value = std::move(move._value);
+                _state = std::move(move._state);
+                return (*this);
             }
 
             EnumType<ENUMERATE>& operator=(const EnumType<ENUMERATE>& RHS)
@@ -2407,9 +2638,9 @@ namespace Core {
             void Null(const bool enabled)
             {
                 if (enabled == true)
-                    _state |= UNDEFINED;
+                    _state |= (UNDEFINED|SET);
                 else
-                    _state &= ~UNDEFINED;
+                    _state &= ~(UNDEFINED|SET);
             }
 
             bool IsSet() const override
@@ -2427,7 +2658,6 @@ namespace Core {
                 _state = 0;
             }
 
-        private:
             // IElement iface:
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
@@ -2448,7 +2678,7 @@ namespace Core {
                 if (offset == 0) {
 
                     if (_parser.IsNull() == true) {
-                        _state = UNDEFINED;
+                        _state = (UNDEFINED|SET);
                     } else if (_parser.IsSet() == true) {
                         // Looks like we parsed the value. Lets see if we can find it..
                         Core::EnumerateType<ENUMERATE> converted(_parser.Value().c_str(), false);
@@ -2457,8 +2687,9 @@ namespace Core {
                             _value = converted.Value();
                             _state = SET;
                         } else {
-                            _state = UNDEFINED;
+                            _state = (SET|UNDEFINED);
                             TRACE_L1(_T("Unknown enum value: %s"), _parser.Value().c_str());
+                            error = Error{ "Unknown enum value: " +  _parser.Value()};
                         }
                     } else {
                         error = Error{ "Invalid enum" };
@@ -2520,6 +2751,8 @@ namespace Core {
         private:
             enum modus : uint8_t {
                 ERROR = 0x80,
+                SET = 0x20,
+                EXTRACT = 0x01,
                 UNDEFINED = 0x40
             };
 
@@ -2551,8 +2784,15 @@ namespace Core {
 
                 ConstIteratorType(const ArrayContainer& container)
                     : _container(&container)
-                    , _iterator(container.begin())
+                    , _iterator(_container->begin())
                     , _state(AT_BEGINNING)
+                {
+                }
+
+                ConstIteratorType(ConstIteratorType<ARRAYELEMENT>&& move)
+                    : _container(std::move(move._container))
+                    , _iterator(std::move(move._iterator))
+                    , _state(std::move(move._state))
                 {
                 }
 
@@ -2563,8 +2803,15 @@ namespace Core {
                 {
                 }
 
-                ~ConstIteratorType()
+                ~ConstIteratorType() = default;
+
+                ConstIteratorType<ARRAYELEMENT>& operator=(ConstIteratorType<ARRAYELEMENT>&& move)
                 {
+                    _container = std::move(move._container);
+                    _iterator = std::move(move._iterator);
+                    _state = std::move(move._state);
+
+                    return (*this);
                 }
 
                 ConstIteratorType<ARRAYELEMENT>& operator=(const ConstIteratorType<ARRAYELEMENT>& RHS)
@@ -2582,15 +2829,35 @@ namespace Core {
                     return (_state == AT_ELEMENT);
                 }
 
-                void Reset()
+                inline bool Reset(const uint32_t index = ~0)
                 {
+                    _state = AT_BEGINNING;
+
                     if (_container != nullptr) {
                         _iterator = _container->begin();
+
+                        if (index != static_cast<uint32_t>(~0)) {
+                            uint32_t position = (index + 1);
+                            while (position > 0) {
+                                while ((_iterator != _container->end()) && (_iterator->IsSet() == false)) {
+                                    _iterator++;
+                                }
+
+                                if (_iterator == _container->end()) {
+                                    position = 0;
+                                }
+                                else if (--position != 0) {
+                                    _iterator++;
+                                }
+                            }
+                            _state = (_iterator != _container->end() ? AT_ELEMENT : AT_END);
+                        }
                     }
-                    _state = AT_BEGINNING;
+
+                    return (_state == AT_ELEMENT);
                 }
 
-                virtual bool Next()
+                inline bool Next()
                 {
                     if (_container != nullptr) {
                         if (_state != AT_END) {
@@ -2653,6 +2920,13 @@ namespace Core {
                 {
                 }
 
+                IteratorType(IteratorType<ARRAYELEMENT>&& move) noexcept
+                    : _container(std::move(move._container))
+                    , _iterator(std::move(move._iterator))
+                    , _state(std::move(move._state))
+                {
+                }
+
                 IteratorType(const IteratorType<ARRAYELEMENT>& copy)
                     : _container(copy._container)
                     , _iterator(copy._iterator)
@@ -2660,8 +2934,15 @@ namespace Core {
                 {
                 }
 
-                ~IteratorType()
+                ~IteratorType() = default;
+
+                IteratorType<ARRAYELEMENT>& operator=(IteratorType<ARRAYELEMENT>&& move) noexcept
                 {
+                    _container = std::move(move._container);
+                    _iterator = std::move(move._iterator);
+                    _state = std::move(move._state);
+
+                    return (*this);
                 }
 
                 IteratorType<ARRAYELEMENT>& operator=(const IteratorType<ARRAYELEMENT>& RHS)
@@ -2679,12 +2960,31 @@ namespace Core {
                     return (_state == AT_ELEMENT);
                 }
 
-                void Reset()
+                bool Reset(const uint32_t index = ~0)
                 {
+                    _state = AT_BEGINNING;
+
                     if (_container != nullptr) {
                         _iterator = _container->begin();
+                        if (index != static_cast<uint32_t>(~0)) {
+                            uint32_t position = (index + 1);
+                            while (position > 0) {
+                                while ((_iterator != _container->end()) && (_iterator->IsSet() == false)) {
+                                    _iterator++;
+                                }
+
+                                if (_iterator == _container->end()) {
+                                    position = 0;
+                                }
+                                else if (--position != 0) {
+                                    _iterator++;
+                                }
+                            }
+                            _state = (_iterator != _container->end() ? AT_ELEMENT : AT_END);
+                        }
                     }
-                    _state = AT_BEGINNING;
+
+                    return (_state == AT_ELEMENT);
                 }
 
                 bool Next()
@@ -2723,7 +3023,7 @@ namespace Core {
 
                 inline uint32_t Count() const
                 {
-                    return (_container == nullptr ? 0 : _container->size());
+                    return (_container == nullptr ? 0 : static_cast<uint32_t>(_container->size()));
                 }
 
             private:
@@ -2744,6 +3044,14 @@ namespace Core {
             {
             }
 
+            ArrayType(ArrayType<ELEMENT>&& move) noexcept
+                : _state(std::move(move._state))
+                , _count(std::move(move._count))
+                , _data(std::move(move._data))
+                , _iterator(std::move(move._iterator))
+            {
+            }
+
             ArrayType(const ArrayType<ELEMENT>& copy)
                 : _state(copy._state)
                 , _count(copy._count)
@@ -2752,21 +3060,62 @@ namespace Core {
             {
             }
 
-            ~ArrayType() override
+            ~ArrayType() override = default;
+
+            ArrayType<ELEMENT>& operator=(ArrayType<ELEMENT>&& move)
             {
+                _state = std::move(move._state);
+                _data = std::move(move._data);
+                _iterator = IteratorType<ELEMENT>(_data);
+
+                return (*this);
+            }
+
+            ArrayType<ELEMENT>& operator=(const ArrayType<ELEMENT>& RHS)
+            {
+                _state = RHS._state;
+                _data = RHS._data;
+                _iterator = IteratorType<ELEMENT>(_data);
+
+                return (*this);
             }
 
         public:
             // IElement and IMessagePack iface:
             bool IsSet() const override
             {
-                return (Length() > 0);
+                return ( (Length() > 0) || ((_state & modus::SET) != 0) );
             }
 
             bool IsNull() const override
             {
                 //TODO: Implement null for Arrays
                 return ((_state & UNDEFINED) != 0);
+            }
+
+            void Set(const bool enabled)
+            {
+                if (enabled == true) {
+                    _state |= (modus::SET);
+                }
+                else {
+                    _state &= (~modus::SET);
+                }
+            }
+
+            void SetExtractOnSingle(const bool enabled)
+            {
+                if (enabled == true) {
+                    _state |= (modus::EXTRACT);
+                }
+                else {
+                    _state &= (~modus::EXTRACT);
+                }
+            }
+
+            bool IsExtractOnSingleSet() const
+            {
+                return ((_state & (modus::EXTRACT)) != 0);
             }
 
             void Clear() override
@@ -2843,15 +3192,6 @@ namespace Core {
                 return (ConstIterator(_data));
             }
 
-            ArrayType<ELEMENT>& operator=(const ArrayType<ELEMENT>& RHS)
-            {
-                _state = RHS._state;
-                _data = RHS._data;
-                _iterator = IteratorType<ELEMENT>(_data);
-
-                return (*this);
-            }
-
             inline operator string() const
             {
                 string result;
@@ -2865,7 +3205,45 @@ namespace Core {
                 return (*this);
             }
 
-        private:
+            template<typename ENUM, typename std::enable_if<std::is_same<ELEMENT, EnumType<ENUM>>::value, int>::type = 0>
+            inline ArrayType<ELEMENT>& operator=(const ENUM& RHS)
+            {
+                using T = typename std::underlying_type<ENUM>::type;
+                T value(static_cast<T>(RHS));
+                T bit(1);
+
+                Clear();
+
+                while (value != 0) {
+                    if ((value & bit) != 0) {
+                        Add() = static_cast<ENUM>(bit);
+                        value &= ~bit;
+                    }
+
+                    bit <<= 1;
+                }
+
+                return (*this);
+            }
+
+            template<typename ENUM, typename std::enable_if<std::is_same<ELEMENT, EnumType<ENUM>>::value, int>::type = 0>
+            inline operator const ENUM() const
+            {
+                using T = typename std::underlying_type<ENUM>::type;
+                T value{};
+
+                for (const EnumType<ENUM>& item : _data) {
+                    if (item.IsSet() == true) {
+                        const T& element = static_cast<const T>(item.Value());
+                        ASSERT((element == 0) || ((element & (element - 1)) == 0));
+
+                        value |= element;
+                    }
+                }
+
+                return (static_cast<const ENUM>(value));
+            }
+
             // IElement iface:
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
@@ -2873,7 +3251,9 @@ namespace Core {
 
                 if (offset == FIND_MARKER) {
                     _iterator.Reset();
-                    stream[loaded++] = '[';
+                    if (((_state & modus::EXTRACT) == 0) || (_data.size() != 1)) {
+                        stream[loaded++] = '[';
+                    }
                     offset = (_iterator.Next() == false ? ~0 : PARSE);
                 } else if (offset == END_MARKER) {
                     offset = ~0;
@@ -2890,7 +3270,9 @@ namespace Core {
                 }
                 if (offset == static_cast<uint32_t>(~0)) {
                     if (loaded < maxLength) {
-                        stream[loaded++] = ']';
+                        if (((_state & modus::EXTRACT) == 0) || (_data.size() != 1)) {
+                            stream[loaded++] = ']';
+                        }
                         offset = FIND_MARKER;
                     } else {
                         offset = END_MARKER;
@@ -2943,12 +3325,13 @@ namespace Core {
                         if (loaded < maxLength) {
                             switch (stream[loaded]) {
                             case ']':
+                                _state |= (modus::SET);
                                 offset = FIND_MARKER;
                                 loaded++;
                                 break;
                             case ',':
                                 if (offset == SKIP_BEFORE) {
-                                    _state = ERROR;
+                                    _state = (ERROR | (_state & 0xF));
                                     error = Error{ "Expected new element, \",\" found." };
                                     offset = FIND_MARKER;
                                 } else {
@@ -3028,7 +3411,7 @@ namespace Core {
 
                 if (offset == 0) {
                     if (stream[0] == IMessagePack::NullValue) {
-                        _state = UNDEFINED;
+                        _state = (UNDEFINED | (_state & 0xF));
                         loaded = 1;
                     } else if ((stream[0] & 0xF0) == 0x90) {
                         _count = (stream[0] & 0x0F);
@@ -3079,7 +3462,8 @@ namespace Core {
         private:
             enum modus : uint8_t {
                 ERROR = 0x80,
-                UNDEFINED = 0x40
+                UNDEFINED = 0x40,
+                COMPLETE = 0x20
             };
 
             static constexpr uint16_t FIND_MARKER = 0;
@@ -3104,8 +3488,10 @@ namespace Core {
 
             private:
                 Iterator();
-                Iterator(const Iterator& copy);
-                Iterator& operator=(const Iterator& RHS);
+                Iterator(Iterator&&);
+                Iterator(const Iterator&);
+                Iterator& operator=(Iterator&&);
+                Iterator& operator=(const Iterator&);
 
             public:
                 Iterator(Container& parent, JSONElementList& container)
@@ -3116,9 +3502,7 @@ namespace Core {
                 {
                 }
 
-                ~Iterator()
-                {
-                }
+                ~Iterator() = default;
 
             public:
                 void Reset()
@@ -3162,22 +3546,26 @@ namespace Core {
             };
 
         public:
-            Container(const Container& copy) = delete;
-            Container& operator=(const Container& RHS) = delete;
+            Container(Container&&) = delete;
+            Container(const Container&) = delete;
+            Container& operator=(Container&&) = delete;
+            Container& operator=(const Container&) = delete;
 
             Container()
                 : _state(0)
+                , _count(0)
                 , _data()
                 , _iterator()
                 , _fieldName(true)
             {
+                ::memset(&_current, 0, sizeof(_current));
             }
-
-            ~Container() override
-            {
-            }
+            ~Container() override = default;
 
         public:
+            bool IsComplete() const {
+                return ( (_state & modus::COMPLETE) != 0);
+            }
             bool HasLabel(const string& label) const
             {
                 JSONElementList::const_iterator index(_data.begin());
@@ -3216,17 +3604,7 @@ namespace Core {
                     index->second->Clear();
                     index++;
                 }
-            }
-
-            void Reset()
-            {
-                JSONElementList::const_iterator index = _data.begin();
-
-                // As long as we did not find a set element, continue..
-                while (index != _data.end()) {
-                    index->second->Clear();
-                    index = _data.erase(index);
-                }
+                _state = 0;
             }
 
             void Add(const TCHAR label[], IElement* element)
@@ -3247,7 +3625,6 @@ namespace Core {
                 }
             }
 
-        private:
             // IElement iface:
             uint16_t Serialize(char stream[], const uint16_t maxLength, uint32_t& offset) const override
             {
@@ -3354,6 +3731,7 @@ namespace Core {
                                     error = Error{ "Expected value, \"}\" found." };
                                 }
                                 offset = FIND_MARKER;
+                                _state |= modus::COMPLETE;
                                 loaded++;
                                 break;
                             case ',':
@@ -3434,6 +3812,9 @@ namespace Core {
                             skip = SKIP_AFTER_KEY;
                         } else {
                             loaded += _current.json->Deserialize(&(stream[loaded]), maxLength - loaded, offset, error);
+                            // It could be that the field name was used, as we are not interested in this field, if so,
+                            // do not forget to reset the field name..
+                            _fieldName.Clear();
                         }
                         offset = (offset == FIND_MARKER ? skip : offset + PARSE);
                     }
@@ -3578,6 +3959,12 @@ namespace Core {
                 return (loaded);
             }
 
+        protected:
+            void Reset()
+            {
+                _data.clear();
+            }
+
             IElement* Find(const char label[])
             {
                 IElement* result = nullptr;
@@ -3628,7 +4015,7 @@ namespace Core {
                 return count;
             }
 
-            virtual bool Request(const TCHAR []) 
+            virtual bool Request(const TCHAR [])
             {
                 return (false);
             }
@@ -3735,16 +4122,27 @@ namespace Core {
                 String::operator=(text);
             }
 
+            Variant(Variant&& move) noexcept
+                : JSON::String(std::move(move))
+                , _type(std::move(move._type))
+            {
+            }
             Variant(const Variant& copy)
                 : JSON::String(copy)
                 , _type(copy._type)
             {
             }
 
+
             Variant(const VariantContainer& object);
 
-            ~Variant() override
+            ~Variant() override = default;
+
+            Variant& operator=(Variant&& move) noexcept
             {
+                JSON::String::operator=(std::move(move));
+                _type = std::move(move._type);
+                return (*this);
             }
 
             Variant& operator=(const Variant& RHS)
@@ -3964,7 +4362,7 @@ namespace Core {
 
         class EXTERNAL VariantContainer : public Container {
         private:
-            typedef std::list<std::pair<string, WPEFramework::Core::JSON::Variant>> Elements;
+            using Elements = std::unordered_map<string, WPEFramework::Core::JSON::Variant>;
 
         public:
             class Iterator {
@@ -3983,6 +4381,16 @@ namespace Core {
                 {
                 }
 
+                Iterator(Iterator&& move) noexcept
+                    : _container(std::move(move._container))
+                    , _index(std::move(move._index))
+                    , _start(std::move(move._start))
+                {
+                    if (_container != nullptr) {
+                        _index = _container->begin();
+                    }
+                }
+
                 Iterator(const Iterator& copy)
                     : _container(copy._container)
                     , _index()
@@ -3993,8 +4401,15 @@ namespace Core {
                     }
                 }
 
-                ~Iterator()
+                ~Iterator() = default;
+
+                Iterator& operator=(Iterator&& move) noexcept
                 {
+                    _container = std::move(move._container);
+                    _index = std::move(move._index);
+                    _start = std::move(move._start);
+
+                    return (*this);
                 }
 
                 Iterator& operator=(const Iterator& rhs)
@@ -4005,6 +4420,7 @@ namespace Core {
 
                     return (*this);
                 }
+
 
             public:
                 bool IsValid() const
@@ -4071,6 +4487,19 @@ namespace Core {
                 Container::FromString(serialized);
             }
 
+            VariantContainer(VariantContainer&& move) noexcept
+                : Container()
+                , _elements(std::move(move._elements))
+            {
+                Elements::iterator index(_elements.begin());
+
+                while (index != _elements.end()) {
+                    ASSERT (HasLabel(index->first.c_str()));
+                    Container::Add(index->first.c_str(), &(index->second));
+                    index++;
+                }
+            }
+
             VariantContainer(const VariantContainer& copy)
                 : Container()
                 , _elements(copy._elements)
@@ -4078,8 +4507,9 @@ namespace Core {
                 Elements::iterator index(_elements.begin());
 
                 while (index != _elements.end()) {
-                    if (copy.HasLabel(index->first.c_str()))
+                   if (copy.HasLabel(index->first.c_str())) {
                         Container::Add(index->first.c_str(), &(index->second));
+                    }
                     index++;
                 }
             }
@@ -4090,17 +4520,15 @@ namespace Core {
                 Elements::const_iterator index(values.begin());
 
                 while (index != values.end()) {
-                    _elements.emplace_back(std::piecewise_construct,
+                    Elements::iterator loop = _elements.emplace(std::piecewise_construct,
                         std::forward_as_tuple(index->first),
-                        std::forward_as_tuple(index->second));
-                    Container::Add(_elements.back().first.c_str(), &(_elements.back().second));
+                        std::forward_as_tuple(index->second)).first;
+                    Container::Add(loop->first.c_str(), &(loop->second));
                     index++;
                 }
             }
 
-            ~VariantContainer() override
-            {
-            }
+            ~VariantContainer() override = default;
 
         public:
             VariantContainer& operator=(const VariantContainer& rhs)
@@ -4129,10 +4557,10 @@ namespace Core {
                 // Now add the ones we are missing from the RHS
                 while (rhs_index != rhs._elements.end()) {
                     if (Find(rhs_index->first.c_str()) == _elements.end()) {
-                        _elements.emplace_back(std::piecewise_construct,
+                        index = _elements.emplace(std::piecewise_construct,
                             std::forward_as_tuple(rhs_index->first),
-                            std::forward_as_tuple(rhs_index->second));
-                        Container::Add(_elements.back().first.c_str(), &(_elements.back().second));
+                            std::forward_as_tuple(rhs_index->second)).first;
+                        Container::Add(index->first.c_str(), &index->second);
                     }
                     rhs_index++;
                 }
@@ -4140,16 +4568,18 @@ namespace Core {
                 return (*this);
             }
 
+
+
             void Set(const TCHAR fieldName[], const JSON::Variant& value)
             {
                 Elements::iterator index(Find(fieldName));
                 if (index != _elements.end()) {
                     index->second = value;
                 } else {
-                    _elements.emplace_back(std::piecewise_construct,
+                    index = _elements.emplace(std::piecewise_construct,
                         std::forward_as_tuple(fieldName),
-                        std::forward_as_tuple(value));
-                    Container::Add(_elements.back().first.c_str(), &(_elements.back().second));
+                        std::forward_as_tuple(value)).first;
+                    Container::Add(index->first.c_str(), &(index->second));
                 }
             }
 
@@ -4171,12 +4601,10 @@ namespace Core {
                 Elements::iterator index(Find(fieldName));
 
                 if (index == _elements.end()) {
-                    _elements.emplace_back(std::piecewise_construct,
+                    index = _elements.emplace(std::piecewise_construct,
                         std::forward_as_tuple(fieldName),
-                        std::forward_as_tuple());
-                    Container::Add(_elements.back().first.c_str(), &(_elements.back().second));
-                    index = _elements.end();
-                    index--;
+                        std::forward_as_tuple()).first;
+                    Container::Add(index->first.c_str(), &(index->second));
                 }
 
                 return (index->second);
@@ -4204,26 +4632,19 @@ namespace Core {
             void Clear()
             {
                 Reset();
+                _elements.clear();
             }
             string GetDebugString(int indent = 0) const;
 
         private:
             Elements::iterator Find(const TCHAR fieldName[])
             {
-                Elements::iterator index(_elements.begin());
-                while ((index != _elements.end()) && (index->first != fieldName)) {
-                    index++;
-                }
-                return (index);
+                return (_elements.find(fieldName));
             }
 
             Elements::const_iterator Find(const TCHAR fieldName[]) const
             {
-                Elements::const_iterator index(_elements.begin());
-                while ((index != _elements.end()) && (index->first != fieldName)) {
-                    index++;
-                }
-                return (index);
+                return (_elements.find(fieldName));
             }
 
             // Container iface:
@@ -4231,11 +4652,11 @@ namespace Core {
             {
                 // Whetever comes in and has no counter part, we need to create a Variant for it, so
                 // it can be filled.
-                _elements.emplace_back(std::piecewise_construct,
+                Elements::iterator  index = _elements.emplace(std::piecewise_construct,
                     std::forward_as_tuple(label),
-                    std::forward_as_tuple());
+                    std::forward_as_tuple()).first;
 
-                Container::Add(_elements.back().first.c_str(), &(_elements.back().second));
+                Container::Add(index->first.c_str(), &(index->second));
 
                 return (true);
             }
@@ -4311,20 +4732,16 @@ namespace Core {
         template <uint16_t SIZE, typename INSTANCEOBJECT>
         class Tester {
         private:
-            typedef Tester<SIZE, INSTANCEOBJECT> ThisClass;
-
-        private:
-            Tester(const Tester<SIZE, INSTANCEOBJECT>&) = delete;
-            Tester<SIZE, INSTANCEOBJECT>& operator=(const Tester<SIZE, INSTANCEOBJECT>&) = delete;
+            using ThisClass = Tester<SIZE, INSTANCEOBJECT>;
 
         public:
-            Tester()
-            {
-            }
+            Tester(Tester<SIZE, INSTANCEOBJECT>&&) = delete;
+            Tester(const Tester<SIZE, INSTANCEOBJECT>&) = delete;
+            Tester<SIZE, INSTANCEOBJECT>& operator=(Tester<SIZE, INSTANCEOBJECT>&&) = delete;
+            Tester<SIZE, INSTANCEOBJECT>& operator=(const Tester<SIZE, INSTANCEOBJECT>&) = delete;
 
-            ~Tester()
-            {
-            }
+            Tester() = default;
+            ~Tester() = default;
 
             bool FromString(const string& value, Core::ProxyType<INSTANCEOBJECT>& receptor)
             {
@@ -4349,7 +4766,7 @@ namespace Core {
 
                 } while ((loaded == size) && (offset != 0));
 
-                return (offset == 0);
+                return (error.IsSet() == false);
             }
 
             bool ToString(const Core::ProxyType<INSTANCEOBJECT>& receptor, string& value)
@@ -4374,6 +4791,69 @@ namespace Core {
         private:
             char _buffer[SIZE];
         };
+
+        template <typename JSONOBJECT>
+        class LabelType : public JSONOBJECT {
+        public:
+            LabelType(LabelType<JSONOBJECT>&&) = delete;
+            LabelType(const LabelType<JSONOBJECT>&) = delete;
+            LabelType<JSONOBJECT>& operator=(LabelType<JSONOBJECT>&&) = delete;
+            LabelType<JSONOBJECT>& operator=(const LabelType<JSONOBJECT>&) = delete;
+
+            LabelType()
+                : JSONOBJECT()
+            {
+            }
+            ~LabelType() override = default;
+
+        public:
+            static const char* Id()
+            {
+                return (__ID<JSONOBJECT>());
+            }
+            virtual const char* Label() const
+            {
+                return (LabelType<JSONOBJECT>::Id());
+            }
+            void Clear() {
+                __Clear();
+            }
+
+        private:
+            IS_MEMBER_AVAILABLE(Id, hasID);
+
+            template <typename TYPE = JSONOBJECT>
+            static inline typename Core::TypeTraits::enable_if<hasID<TYPE, const char*>::value, const char*>::type __ID()
+            {
+                return (JSONOBJECT::Id());
+            }
+
+            template <typename TYPE = JSONOBJECT>
+            static inline typename Core::TypeTraits::enable_if<!hasID<TYPE, const char*>::value, const char*>::type __ID()
+            {
+                static std::string className = (Core::ClassNameOnly(typeid(JSONOBJECT).name()).Text());
+
+                return (className.c_str());
+            }
+
+            // -----------------------------------------------------
+            // Check for Clear method on Object
+            // -----------------------------------------------------
+            IS_MEMBER_AVAILABLE_INHERITANCE_TREE(Clear, hasClear);
+
+            template <typename TYPE = JSONOBJECT>
+            inline typename Core::TypeTraits::enable_if<hasID<TYPE, void>::value, void>::type
+                __Clear()
+            {
+                TYPE::Clear();
+            }
+            template <typename TYPE = JSONOBJECT>
+            inline typename Core::TypeTraits::enable_if<!hasID<TYPE, void>::value, void>::type
+                __Clear()
+            {
+            }
+        };
+
     } // namespace JSON
 } // namespace Core
 } // namespace WPEFramework

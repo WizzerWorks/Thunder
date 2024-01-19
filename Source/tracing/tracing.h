@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,4 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include "ITraceControl.h"
-#include "ITraceMedia.h"
-#include "Logging.h"
-#include "TraceCategories.h"
-#include "TraceControl.h"
-#include "TraceMedia.h"
-#include "TraceUnit.h"
-
-#ifdef __WINDOWS__
-#pragma comment(lib, "tracing.lib")
-#endif
+#include <messaging/messaging.h>

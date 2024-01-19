@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -58,23 +58,87 @@ endif()
 set(NAMESPACE "@NAMESPACE@" CACHE INTERNAL "" FORCE)
 set("${NAMESPACE}_FOUND" TRUE CACHE INTERNAL "" FORCE)
 
+add_definitions("-DTHUNDER_PLATFORM_@PLATFORM@=1")
+
 string(TOLOWER ${NAMESPACE} _STORAGE_DIRECTORY)
 set(STORAGE_DIRECTORY ${_STORAGE_DIRECTORY} CACHE INTERNAL "" FORCE)
 
-option(HIDE_NON_EXTERNAL_SYMBOLS "Export all symbols that have been marked EXTERNAL" OFF)
-
-if (NOT HIDE_NON_EXTERNAL_SYMBOLS)
+if(NOT DEFINED HIDE_NON_EXTERNAL_SYMBOLS)
     set(HIDE_NON_EXTERNAL_SYMBOLS @HIDE_NON_EXTERNAL_SYMBOLS@)
 endif()
 
-if (HIDE_NON_EXTERNAL_SYMBOLS)
-    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-    set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
+if(HIDE_NON_EXTERNAL_SYMBOLS)
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden CACHE INTERNAL "" FORCE)
+    set(CMAKE_VISIBILITY_INLINES_HIDDEN 1 CACHE INTERNAL "" FORCE)
+endif()
+
+if(NOT DEFINED LEGACY_CONFIG_GENERATOR)
+    set(LEGACY_CONFIG_GENERATOR @LEGACY_CONFIG_GENERATOR@ CACHE INTERNAL "" FORCE)
+endif()
+
+set(CMAKE_BUILD_TYPE @CMAKE_BUILD_TYPE@ CACHE INTERNAL "" FORCE)
+
+# FIX_ME: Disable fortify source.
+#         https://jira.rdkcentral.com/jira/browse/METROL-483
+#         Enabled in upstream buildroot, generates a lot of warnings, caused by missing optimalisation flags.
+#         https://www.redhat.com/en/blog/enhance-application-security-fortifysource
+string(REGEX REPLACE "-D_FORTIFY_SOURCE=[0-3]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REGEX REPLACE "-D_FORTIFY_SOURCE=[0-3]" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+
+string(REGEX REPLACE "(-g[0123])" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REGEX REPLACE "\\-\\g$" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} CACHE INTERNAL "" FORCE)
+string(REGEX REPLACE "(-O([0123gs]|fast))" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+string(REGEX REPLACE "(-g[0123])" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+string(REGEX REPLACE "\\-\\g$" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+set(CMAKE_C_FLAGS ${CMAKE_C_FLAGS} CACHE INTERNAL "" FORCE)
+
+if(NOT DEFINED ENABLE_STRICT_COMPILER_SETTINGS)
+    set(ENABLE_STRICT_COMPILER_SETTINGS @ENABLE_STRICT_COMPILER_SETTINGS@)
+endif()
+
+if(ENABLE_STRICT_COMPILER_SETTINGS)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "Compiling with Clang")
+        set(CMAKE_STRICT_COMPILER_SETTINGS "-Weverything -Wextra -Werror=return-type -Werror=array-bounds")
+        set(CMAKE_STRICT_CXX_COMPILER_SETTINGS "${CMAKE_STRICT_COMPILER_SETTINGS} -Wnon-virtual-dtor")
+    elseif(${CMAKE_COMPILER_IS_GNUCXX})
+        message(STATUS "Compiling with GCC")
+        set(CMAKE_STRICT_COMPILER_SETTINGS "-Wall -Wextra -Werror=return-type -Werror=array-bounds")
+        set(CMAKE_STRICT_CXX_COMPILER_SETTINGS "${CMAKE_STRICT_COMPILER_SETTINGS} -Wnon-virtual-dtor")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+        message(STATUS "Compiling with MS Visual Studio")
+        set(CMAKE_STRICT_COMPILER_SETTINGS "/W4")
+    else()
+        message(STATUS "Compiler ${CMAKE_CXX_COMPILER_ID}")
+    endif()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_STRICT_CXX_COMPILER_SETTINGS}" CACHE INTERNAL "" FORCE)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_STRICT_COMPILER_SETTINGS}" CACHE INTERNAL "" FORCE)
 endif()
 
 set(MODULE_BASE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "" FORCE)
 
-list(APPEND CMAKE_MODULE_PATH "${MODULE_BASE_DIR}/common")
+# By default build shared libraries
+if(NOT DEFINED BUILD_SHARED_LIBS)
+    set(BUILD_SHARED_LIBS @BUILD_SHARED_LIBS@ CACHE INTERNAL "ON" FORCE)
+endif()
+
+if(BUILD_SHARED_LIBS)
+    list(APPEND CMAKE_MODULE_PATH "${MODULE_BASE_DIR}/common" "${CMAKE_SYSROOT}@CMAKE_INSTALL_PREFIX@/include/${NAMESPACE}/Modules")
+else()
+    find_package(Threads)
+    find_package(CompileSettingsDebug CONFIG)
+    list(APPEND CMAKE_MODULE_PATH "${MODULE_BASE_DIR}/common" "${CMAKE_SYSROOT}@CMAKE_INSTALL_PREFIX@/include/${NAMESPACE}/Modules" @CMAKE_INSTALL_PREFIX@/lib/cmake/${NAMESPACE}/modules)
+endif()
+
+if(NOT DEFINED TOOLS_SYSROOT)
+    set(TOOLS_SYSROOT @TOOLS_SYSROOT@)
+endif()
+
+if(TOOLS_SYSROOT)
+    list(APPEND CMAKE_MODULE_PATH
+        "${TOOLS_SYSROOT}/@CMAKE_INSTALL_PREFIX@/include/${NAMESPACE}/Modules")
+endif()
 
 list(REMOVE_DUPLICATES CMAKE_MODULE_PATH)
 list(SORT CMAKE_MODULE_PATH)
@@ -82,7 +146,7 @@ list(SORT CMAKE_MODULE_PATH)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} CACHE INTERNAL "" FORCE)
 
 get_directory_property(hasParent PARENT_DIRECTORY)
-if(hasParent) 
+if(hasParent)
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} PARENT_SCOPE)
 endif()
 
@@ -106,143 +170,6 @@ function(config_dir key)
 	return("${TMP_DIR}")
 endfunction()
 
-macro(IncludeConfig)
-    if(NOT COMMAND map)
-        ## includes all cmake files of cmakepp to write json files
-        include("${MODULE_BASE_DIR}/config/core/require.cmake")
-        require("${MODULE_BASE_DIR}/config/*.cmake")
-    endif()
-endmacro()
-
-# ----------------------------------------------------------------------------------------
-# write_config
-# ----------------------------------------------------------------------------------------
-# Writes and installs a json configs for a plugin. 
-#
-#    optional:
-#    PLUGINS     List of the config files to write without extention defaults to 
-#                PROJECT_NAME only
-#                e.g. "UX" will generate and install UX.json for the WebkitBrowser plugin.
-#    CLASSNAME   Name of the package, defaults to PROJECT_NAME of 
-#                the latest cmake project call.
-#    LOCATOR     Version of the package, defaults to lib + MODULE_NAME + CMAKE_SHARED_LIBRARY_SUFFIX
-#                of the latest cmake project call.
-#    COMPONENT   The cmake component group defaults to PROJECT_NAME
-# ----------------------------------------------------------------------------------------
-macro(write_config)
-    set(optionsArgs )
-    set(oneValueArgs CLASSNAME LOCATOR COMPONENT)
-    set(multiValueArgs PLUGINS)
-
-    cmake_parse_arguments(ARG "${optionsArgs}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN} )
-    
-    if(ARG_UNPARSED_ARGUMENTS)
-        if(ARG_PLUGINS)
-            message(FATAL_ERROR "Unknown keywords given to write_config: \"${ARG_UNPARSED_ARGUMENTS}\"")
-        else()
-            if ("${ARG_UNPARSED_ARGUMENTS}" STREQUAL "${PROJECT_NAME}")
-                set(_fix "write_config\(\)")
-            else()
-                set(_fix "write_config\(PLUGINS ${ARG_UNPARSED_ARGUMENTS}\)")
-            endif()
-            message(DEPRECATION "======DEPRECATION=DETECTED==================================================\nPROPOSED FIX:\n${CMAKE_CURRENT_LIST_FILE}\n\"write_config(${ARGN})\" --> \"${_fix}\"\n\============================================================================")
-            set(_plugins ${ARG_UNPARSED_ARGUMENTS})
-            set(_classname ${PLUGIN_NAME})
-            set(_component ${ARG_UNPARSED_ARGUMENTS})
-            message(STATUS "Assuming:")
-            message(STATUS "Plugin: ${_plugins}")
-            message(STATUS "Classname: ${_classname}")
-            message(STATUS "Component: ${_component}")
-        endif()
-    endif()
-
-    if(NOT _component AND NOT _plugins AND NOT _classname)
-    if(ARG_CLASSNAME)
-        set(_classname ${ARG_CLASSNAME})
-    else()
-        set(_classname ${PROJECT_NAME})
-    endif()
-    
-    if(ARG_PLUGINS)
-        set(_plugins ${ARG_PLUGINS})
-    else()
-        set(_plugins ${PROJECT_NAME})
-    endif() 
-
-    if(ARG_COMPONENT)
-        set(_component ${ARG_COMPONENT})
-    else()
-        set(_component ${PROJECT_NAME})
-    endif() 
-    endif()
-
-    if(ARG_LOCATOR)
-        set(_locator ${ARG_LOCATOR})
-    else()
-        set(_locator lib${MODULE_NAME}${CMAKE_SHARED_LIBRARY_SUFFIX})
-    endif()
-
-    IncludeConfig()
-    
-    foreach(plugin ${_plugins})
-        message(STATUS "Writing configuration for ${plugin}")
-
-        map()
-        kv(locator ${_locator})
-        kv(classname ${_classname})
-        end()
-        ans(plugin_config) # default configuration
-
-        if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${plugin}.config")
-            include(${CMAKE_CURRENT_LIST_DIR}/${plugin}.config)
-
-            list(LENGTH preconditions number_preconditions)
-            if (number_preconditions GREATER 0)
-                map_append(${plugin_config} precondition ___array___)
-                foreach(entry ${preconditions})
-                    map_append(${plugin_config} precondition ${entry})
-                endforeach()
-            endif()
-
-            list(LENGTH terminations number_terminations)
-            if (number_terminations GREATER 0)
-                map_append(${plugin_config} termination ___array___)
-                foreach(entry ${terminations})
-                    map_append(${plugin_config} termination ${entry})
-                endforeach()
-            endif()
-
-            if (NOT ${callsign} STREQUAL "")
-                map_append(${plugin_config} callsign ${callsign})
-            endif()
-
-            if (NOT ${autostart} STREQUAL "")
-                map_append(${plugin_config} autostart ${autostart})
-            endif()
-
-            if (NOT ${resumed} STREQUAL "")
-                map_append(${plugin_config} resumed ${resumed})
-            endif()
-
-            if (NOT ${configuration} STREQUAL "")
-                map_append(${plugin_config} configuration ${configuration})
-            endif()
-        endif()
-
-        json_write("${CMAKE_CURRENT_BINARY_DIR}/config/${plugin}.json" ${plugin_config})
-
-        install(
-                FILES ${CMAKE_CURRENT_BINARY_DIR}/config/${plugin}.json DESTINATION
-                "${CMAKE_INSTALL_PREFIX}/../etc/${NAMESPACE}/plugins/"
-                COMPONENT ${_component})
-    endforeach()
-
-    unset(_plugins)
-    unset(_classname)
-    unset(_component)
-
-endmacro()
-
 function(add_compiler_flags modulename options)
     set(cleanLine ${options})
     foreach(VAL ${cleanLine})
@@ -252,7 +179,7 @@ endfunction()
 
 function(add_linker_flags modulename options)
     get_target_property(original ${modulename} LINK_FLAGS)
-    if (original) 
+    if (original)
         set(cleanLine ${options} ${original})
     else(original)
         set(cleanLine ${options})
@@ -262,13 +189,13 @@ function(add_linker_flags modulename options)
     foreach(VAL ${options})
         string(APPEND linkoptions "${VAL} ")
     endforeach()
-   
+
     if (NOT "${linkoptions}" STREQUAL "")
         set_target_properties(${modulename} PROPERTIES LINK_FLAGS "${linkoptions}")
     endif()
 endfunction()# Get all propreties that cmake supports
 
-# for debugging cmake targets 
+# for debugging cmake targets
 execute_process(COMMAND cmake --help-property-list OUTPUT_VARIABLE CMAKE_PROPERTY_LIST)
 
 # Convert command output into a CMake list

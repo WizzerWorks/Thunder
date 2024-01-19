@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,23 +130,22 @@ namespace Web {
 
             const static uint16_t EOL_MARKER = 0x8000;
 
+        public:
             Serializer(const Serializer&) = delete;
             Serializer& operator=(const Serializer&) = delete;
 
-        public:
             Serializer()
                 : _state(VERSION)
                 , _offset(0)
                 , _keyIndex(0)
                 , _value()
+                , _bodyLength(0)
                 , _buffer(nullptr)
                 , _lock()
                 , _current()
             {
             }
-            ~Serializer()
-            {
-            }
+            virtual ~Serializer() = default;
 
         public:
             virtual void Serialized(const Web::Response& element) = 0;
@@ -200,28 +199,23 @@ namespace Web {
             };
             typedef Core::ParserType<Core::TerminatorCarriageReturnLineFeed, Deserializer> Parser;
 
+        public:
             Deserializer(const Deserializer&) = delete;
             Deserializer& operator=(const Deserializer&) = delete;
 
-        public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
             Deserializer()
                 : _lock()
                 , _current()
                 , _state(VERSION)
+                , _keyWord(Web::Response::keywords::SERVER)
                 , _parser(*this)
                 , _zlib()
 				, _zlibResult(0)
             {
             }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-            ~Deserializer()
-            {
-            }
+POP_WARNING()
+            virtual ~Deserializer() = default;
 
         public:
             inline void Flush()
@@ -303,9 +297,7 @@ namespace Web {
                     , _ready(readyFlag)
                 {
                 }
-                virtual ~SerializerImpl()
-                {
-                }
+                ~SerializerImpl() override = default;
 
             public:
                 virtual void Serialized(const Response& /* element */)
@@ -346,9 +338,7 @@ namespace Web {
                     , _destination(destination)
                 {
                 }
-                virtual ~DeserializerImpl()
-                {
-                }
+                ~DeserializerImpl() override = default;
 
             public:
                 // The whole request object is deserialised..
@@ -460,21 +450,21 @@ namespace Web {
         template <typename BODYTYPE>
         inline void Body(const Core::ProxyType<BODYTYPE>& body)
         {
-            _body = Core::proxy_cast<IBody>(body);
+            _body = Core::ProxyType<IBody>(body);
         }
         template <typename BODYTYPE>
         inline Core::ProxyType<BODYTYPE> Body()
         {
             ASSERT(HasBody() == true);
 
-            return (Core::proxy_cast<BODYTYPE>(_body));
+            return (Core::ProxyType<BODYTYPE>(_body));
         }
         template <typename BODYTYPE>
         inline Core::ProxyType<const BODYTYPE> Body() const
         {
             ASSERT(HasBody() == true);
 
-            return (Core::proxy_cast<const BODYTYPE>(_body));
+            return (Core::ProxyType<const BODYTYPE>(_body));
         }
         inline void Mode(const MarshalType mode)
         {

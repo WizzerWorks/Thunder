@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ namespace Core {
     // This class allows to share data over process boundaries. This is a simple version of the
     // CyclicBuffer.
     // The rationale behind this buffer is to share buffer space (SharedMemory file) between two
-    // porocesses. One process produces data, the othere process consumes it. The signalling
+    // processes. One process produces data, the othere process consumes it. The signalling
     // between the two processes is based on a semaphore (binairy semaphore) The Producer creates
     // the SharedBuffer object, indicting it has the Producer role. It will automatically own
     // the producer lock. If the producer has placed the data in the buffer and would like the
@@ -179,6 +179,37 @@ namespace Core {
         uint32_t BytesWritten() const
         {
             return (_administration->_bytesWritten);
+        }
+
+        uint32_t User(const string& userName) const
+        {
+            uint32_t result = _administrationBuffer.User(userName);
+
+            if (result == Core::ERROR_NONE){
+                result = DataElementFile::User(userName);
+            }
+
+            return result;
+        }
+        uint32_t Group(const string& groupName) const
+        {
+            uint32_t result = _administrationBuffer.Group(groupName);
+
+            if (result == Core::ERROR_NONE){
+                result = DataElementFile::Group(groupName);
+            }
+
+            return result;
+        }
+        uint32_t Permission(uint16_t mode) const
+        {
+            uint32_t result = _administrationBuffer.Permission(mode);
+
+            if (result == Core::ERROR_NONE){
+                result = DataElementFile::Permission(mode);
+            }
+
+            return result;
         }
 
     private:

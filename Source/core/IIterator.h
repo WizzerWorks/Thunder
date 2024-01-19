@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
 namespace WPEFramework {
 namespace Core {
     struct IIterator {
-        virtual ~IIterator(){};
+        virtual ~IIterator() = default;
         virtual bool Next() = 0;
         virtual bool Previous() = 0;
         virtual void Reset(const uint32_t position) = 0;
@@ -67,15 +67,19 @@ namespace Core {
                 index++;
             }
         }
+        IteratorType(IteratorType<CONTAINER, ELEMENT, ITERATOR>&& move)
+            : m_Container(std::move(move.m_Container))
+            , m_Iterator(std::move(move.m_Iterator))
+            , m_Index(move.m_Index)
+        {
+        }
         IteratorType(const IteratorType<CONTAINER, ELEMENT, ITERATOR>& copy)
             : m_Container(copy.m_Container)
             , m_Iterator(copy.m_Iterator)
             , m_Index(copy.m_Index)
         {
         }
-        ~IteratorType()
-        {
-        }
+        ~IteratorType() = default;
 
         IteratorType<CONTAINER, ELEMENT, ITERATOR>& operator=(const IteratorType<CONTAINER, ELEMENT, ITERATOR>& RHS)
         {
@@ -162,7 +166,7 @@ namespace Core {
         {
             ASSERT(IsValid());
 
-            return (*m_Iterator);
+                return (*m_Iterator);
         }
 
         inline const ELEMENT& Current() const
@@ -208,6 +212,11 @@ namespace Core {
         inline const CONTAINER* Container() const
         {
             return (m_Container);
+        }
+        inline void Container(CONTAINER& container) {
+            m_Container = &container;
+            m_Iterator = m_Container->begin();
+            m_Index = 0;
         }
 
     private:

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- 
+
 #include "Library.h"
 #include "Sync.h"
 #include "Trace.h"
@@ -32,6 +32,44 @@ namespace Core {
         : _refCountedHandle(nullptr)
         , _error()
     {
+    }
+    Library::Library(const void* functionInLibrary) {
+        TCHAR filename[512];
+
+#ifdef __WINDOWS__
+        HMODULE handle = nullptr;
+        GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCSTR)functionInLibrary, &handle);
+
+        if (handle != nullptr) {
+            GetModuleFileName(handle, filename, sizeof(filename));
+
+            // Looks like we need to add a ref count by opening it..
+            handle = ::LoadLibrary(filename);
+        }
+#endif
+#ifdef __LINUX__
+        void* handle = nullptr;
+        Dl_info info;
+        if (dladdr(functionInLibrary, &info) != 0) {
+            _tcsncpy (filename, info.dli_fname, sizeof(filename) - 1);
+            handle = ::dlopen(filename, RTLD_NOLOAD);
+        }
+#endif
+        if (handle != nullptr) {
+            // Seems we have an dynamic library opened..
+            _refCountedHandle = new RefCountedHandle;
+            _refCountedHandle->_referenceCount = 1;
+            _refCountedHandle->_handle = handle;
+            _refCountedHandle->_name = filename;
+        }
+        else {
+#ifdef __LINUX__
+            _error = dlerror();
+            TRACE_L1("Failed to load library: %s, error %s", filename, _error.c_str());
+#endif
+        }
     }
     Library::Library(const TCHAR fileName[])
         : _refCountedHandle(nullptr)
@@ -63,6 +101,12 @@ namespace Core {
     {
         AddRef();
     }
+    Library::Library(Library&& move)
+        : _refCountedHandle(move._refCountedHandle)
+    {
+        move._refCountedHandle = nullptr;
+    }
+
     Library::~Library()
     {
         Release();
@@ -125,7 +169,8 @@ namespace Core {
     uint32_t Library::Release()
     {
         if (_refCountedHandle != nullptr) {
-            if (_refCountedHandle->_referenceCount == 1) {
+            ASSERT(_refCountedHandle->_referenceCount > 0);
+            if (Core::InterlockedDecrement(_refCountedHandle->_referenceCount) == 0) {
 
                 ModuleUnload function = reinterpret_cast<ModuleUnload>(LoadFunction(_T("ModuleUnload")));
 
@@ -142,8 +187,6 @@ namespace Core {
 #endif
                 TRACE_L1("Unloaded library: %s", _refCountedHandle->_name.c_str());
                 delete _refCountedHandle;
-            } else {
-                Core::InterlockedDecrement(_refCountedHandle->_referenceCount);
             }
             _refCountedHandle = nullptr;
         }

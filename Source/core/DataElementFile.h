@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,12 +43,14 @@ namespace Core {
     class EXTERNAL DataElementFile : public DataElement {
     public:
         DataElementFile() = delete;
-        DataElementFile(const DataElementFile&) = delete;
         DataElementFile& operator=(const DataElementFile&) = delete;
 
         DataElementFile(File& fileName, const uint32_t type);
         DataElementFile(const string& fileName, const uint32_t mode, const uint32_t requiredSize = 0);
-        virtual ~DataElementFile();
+        DataElementFile(const DataElementFile&);
+        ~DataElementFile() override {
+            Close();
+        }
 
     public:
         inline const string& Name() const
@@ -71,10 +73,43 @@ namespace Core {
         {
             m_File.LoadFileInfo();
         }
+        inline uint32_t User(const string& userName) const
+        {
+            return (m_File.User(userName));
+        }
+        inline uint32_t Group(const string& groupName) const
+        {
+            return (m_File.Group(groupName));
+        }
+        inline uint32_t Permission(uint16_t mode) const
+        {
+            return (m_File.Permission(mode));
+        }
+        bool Unlink()
+        {
+            bool closed = IsValid();
+
+            if (closed == true) {
+                Close();
+                closed = m_File.Unlink();
+            }
+            return (closed);
+        }
+        bool Destroy()
+        {
+            bool closed = IsValid();
+
+            if (closed == true) {
+                Close();
+                closed = m_File.Destroy();
+            }
+            return (closed);
+        }
         bool Load();
         void Sync();
 
     protected:
+        void Close();
         virtual void Reallocation(const uint64_t size);
 
         void ReopenMemoryMappedFile();

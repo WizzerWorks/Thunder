@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,24 +54,24 @@ namespace Core {
     public:
         bool ReadLock(const uint32_t waitTime = Core::infinite)
         {
-            bool aquired = false;
+            bool acquired = false;
 
-            while ((aquired == false) && (m_State.WaitState(IDLE | READERS, waitTime) == true)) {
+            while ((acquired == false) && (m_State.WaitState(IDLE | READERS, waitTime) == true)) {
                 m_State.Lock();
 
                 if (m_State == IDLE) {
                     m_State.SetState(READERS);
                     m_Readers++;
-                    aquired = true;
+                    acquired = true;
                 } else if (m_State == READERS) {
                     m_Readers++;
-                    aquired = true;
+                    acquired = true;
                 }
 
                 m_State.Unlock();
             }
 
-            return (aquired);
+            return (acquired);
         }
 
         void ReadUnlock()
@@ -93,22 +93,22 @@ namespace Core {
         bool WriteLock(const uint32_t waitTime = Core::infinite)
         {
             // Only 1 allowed, so we need to be in INDLE state
-            bool aquired = false;
+            bool acquired = false;
 
-            while ((aquired == false) && (m_State.WaitState(IDLE, waitTime) == true)) {
+            while ((acquired == false) && (m_State.WaitState(IDLE, waitTime) == true)) {
                 m_State.Lock();
 
                 if (m_State == IDLE) {
                     ASSERT(m_Readers == 0);
 
                     m_State.SetState(WRITER);
-                    aquired = true;
+                    acquired = true;
                 }
 
                 m_State.Unlock();
             }
 
-            return (aquired);
+            return (acquired);
         }
         void WriteUnlock()
         {

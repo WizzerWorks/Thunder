@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,8 @@
 #ifndef __GENERICS_H
 #define __GENERICS_H
 
-#include <algorithm>
-#include <iostream>
-#include <list>
-#include <map>
-#include <sstream>
-#include <typeinfo>
-#include <vector>
-
-#ifdef WIN32
-#include <xutility>
+#ifndef MODULE_NAME
+#error "Please define a MODULE_NAME that describes the binary/library you are building."
 #endif
 
 #include "Module.h"
@@ -48,6 +40,7 @@
 #include "Enumerate.h"
 #include "Factory.h"
 #include "FileSystem.h"
+#include "FileObserver.h"
 #include "Frame.h"
 #include "IPCMessage.h"
 #include "IPCChannel.h"
@@ -94,6 +87,7 @@
 #include "SystemInfo.h"
 #include "TextFragment.h"
 #include "TextReader.h"
+#include "TextStreamRedirectType.h"
 #include "Thread.h"
 #include "ThreadPool.h"
 #include "Time.h"
@@ -108,6 +102,8 @@
 #include "WarningReportingControl.h"
 #include "WarningReportingCategories.h"
 #include "CallsignTLS.h"
+#include "TokenizedStringList.h"
+#include "MessageStore.h"
 
 #ifdef __WINDOWS__
 #pragma comment(lib, "core.lib")

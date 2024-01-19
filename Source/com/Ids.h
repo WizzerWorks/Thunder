@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,42 +25,66 @@ namespace WPEFramework {
 namespace RPC {
 
     enum IDS {
-        ID_COMCONNECTION = 0x00000001,
-        ID_COMCONNECTION_NOTIFICATION = 0x00000002,
-        ID_TRACEITERATOR = 0x00000003,
-        ID_TRACECONTROLLER = 0x00000004,
-        ID_STRINGITERATOR = 0x00000005,
-        ID_VALUEITERATOR = 0x00000006,
-        ID_MONITORABLE_PROCESS = 0x00000007,
+        ID_OFFSET_INTERNAL                         = (Core::IUnknown::ID_OFFSET_INTERNAL),
 
-        ID_ACCESSOROCDM = 0x00000010,
-        ID_ACCESSOROCDM_NOTIFICATION = 0x00000012,
-        ID_SESSION = 0x00000013,
-        ID_SESSION_CALLBACK = 0x00000014,
-        ID_SESSION_EXTENSION = 0x00000015,
+        ID_COMCONNECTION                           = (ID_OFFSET_INTERNAL + 0x0001),
+        ID_COMCONNECTION_NOTIFICATION              = (ID_OFFSET_INTERNAL + 0x0002),
+        ID_TRACEITERATOR                           = (ID_OFFSET_INTERNAL + 0x0003),
+        ID_TRACECONTROLLER                         = (ID_OFFSET_INTERNAL + 0x0004),
+        ID_STRINGITERATOR                          = (ID_OFFSET_INTERNAL + 0x0005),
+        ID_VALUEITERATOR                           = (ID_OFFSET_INTERNAL + 0x0006),
+        ID_MONITORABLE_PROCESS                     = (ID_OFFSET_INTERNAL + 0x0007),
+        ID_CONTROLLER_CONFIGURATION                = (ID_OFFSET_INTERNAL + 0x0008),
+        ID_CONTROLLER_DISCOVERY                    = (ID_OFFSET_INTERNAL + 0x0009),
+        ID_CONTROLLER_DISCOVERY_DISCOVERYRESULTS_ITERATOR  = (ID_OFFSET_INTERNAL + 0x000A),
+        ID_CONTROLLER_SYSTEMINFO                   = (ID_OFFSET_INTERNAL + 0x000B),
+        ID_CONTROLLER_LIFETIME                     = (ID_OFFSET_INTERNAL + 0x000C),
+        ID_CONTROLLER_LIFETIME_NOTIFICATION        = (ID_OFFSET_INTERNAL + 0x000D),
+        ID_CONTROLLER_METADATA                     = (ID_OFFSET_INTERNAL + 0x000E),
+        ID_CONTROLLER_METADATA_SERVICES_ITERATOR   = (ID_OFFSET_INTERNAL + 0x000F),
+        ID_CONTROLLER_METADATA_LINKS_ITERATOR      = (ID_OFFSET_INTERNAL + 0x0010),
+        ID_CONTROLLER_METADATA_PROXIES_ITERATOR    = (ID_OFFSET_INTERNAL + 0x0011),
+        ID_CONTROLLER_METADATA_THREADS_ITERATOR    = (ID_OFFSET_INTERNAL + 0x0012),
+        ID_CONTROLLER_METADATA_SUBSYSTEMS_ITERATOR = (ID_OFFSET_INTERNAL + 0x0013),
+        ID_CONTROLLER_METADATA_CALLSTACK_ITERATOR  = (ID_OFFSET_INTERNAL + 0x0014),
+        ID_CONTROLLER_SYSTEM_MANAGEMENT            = (ID_OFFSET_INTERNAL + 0x0015),
+        ID_CONTROLLER_SHELLS                       = (ID_OFFSET_INTERNAL + 0x0017),
+        ID_CONTROLLER_SHELLS_NOTIFICATION          = (ID_OFFSET_INTERNAL + 0x0018),
 
-        ID_PLUGIN = 0x00000020,
-        ID_PLUGIN_NOTIFICATION = 0x00000021,
-        ID_PLUGINEXTENDED = 0x00000022,
-        ID_WEB = 0x00000023,
-        ID_WEBSOCKET = 0x00000024,
-        ID_DISPATCHER = 0x00000025,
-        ID_TEXTSOCKET = 0x00000026,
-        ID_CHANNEL = 0x00000027,
-        ID_SECURITY = 0x00000028,
-        ID_AUTHENTICATE = 0x00000029,
-
-        ID_SHELL = 0x00000030,
-        ID_STATECONTROL = 0x00000031,
-        ID_STATECONTROL_NOTIFICATION = 0x00000032,
-        ID_SUBSYSTEM = 0x00000033,
-        ID_SUBSYSTEM_NOTIFICATION = 0x00000034,
-        ID_SUBSYSTEM_INTERNET = 0x00000035,
-        ID_SUBSYSTEM_LOCATION = 0x00000036,
-        ID_SUBSYSTEM_IDENTIFIER = 0x00000037,
-        ID_SUBSYSTEM_TIME = 0x00000038,
-		ID_SUBSYSTEM_SECURITY = 0x00000039,
-        ID_REMOTE_INSTANTIATION = 0x0000003A
+        // Plugin module
+        ID_PLUGIN                           = (ID_OFFSET_INTERNAL + 0x0021),
+        ID_CONTROLLER                       = (ID_OFFSET_INTERNAL + 0x0020),
+        ID_PLUGIN_NOTIFICATION              = (ID_OFFSET_INTERNAL + 0x0022),
+        ID_PLUGINEXTENDED                   = (ID_OFFSET_INTERNAL + 0x0023),
+        ID_WEB                              = (ID_OFFSET_INTERNAL + 0x0024),
+        ID_WEBSOCKET                        = (ID_OFFSET_INTERNAL + 0x0025),
+        ID_DISPATCHER                       = (ID_OFFSET_INTERNAL + 0x0026),
+        ID_TEXTSOCKET                       = (ID_OFFSET_INTERNAL + 0x0027),
+        ID_CHANNEL                          = (ID_OFFSET_INTERNAL + 0x0028),
+        ID_SECURITY                         = (ID_OFFSET_INTERNAL + 0x0029),
+        ID_AUTHENTICATE                     = (ID_OFFSET_INTERNAL + 0x002A),
+        ID_PLUGIN_LIFETIME                  = (ID_OFFSET_INTERNAL + 0x002B),
+        ID_COMPOSIT_PLUGIN                  = (ID_OFFSET_INTERNAL + 0x002C),
+        ID_COMPOSIT_PLUGIN_CALLBACK         = (ID_OFFSET_INTERNAL + 0x002D),
+        ID_DISPATCHER_CALLBACK              = (ID_OFFSET_INTERNAL + 0x002E),
+                                            
+        ID_SHELL                            = (ID_OFFSET_INTERNAL + 0x0030),
+        ID_STATECONTROL                     = (ID_OFFSET_INTERNAL + 0x0031),
+        ID_STATECONTROL_NOTIFICATION        = (ID_OFFSET_INTERNAL + 0x0032),
+        ID_SUBSYSTEM                        = (ID_OFFSET_INTERNAL + 0x0033),
+        ID_SUBSYSTEM_NOTIFICATION           = (ID_OFFSET_INTERNAL + 0x0034),
+        ID_SUBSYSTEM_INTERNET               = (ID_OFFSET_INTERNAL + 0x0035),
+        ID_SUBSYSTEM_LOCATION               = (ID_OFFSET_INTERNAL + 0x0036),
+        ID_SUBSYSTEM_IDENTIFIER             = (ID_OFFSET_INTERNAL + 0x0037),
+        ID_SUBSYSTEM_TIME                   = (ID_OFFSET_INTERNAL + 0x0038),
+        ID_SUBSYSTEM_SECURITY               = (ID_OFFSET_INTERNAL + 0x0039),
+        ID_SUBSYSTEM_PROVISIONING           = (ID_OFFSET_INTERNAL + 0x003A),
+        ID_SUBSYSTEM_DECRYPTION             = (ID_OFFSET_INTERNAL + 0x003B),
+        ID_REMOTE_INSTANTIATION             = (ID_OFFSET_INTERNAL + 0x003C),
+        ID_COMREQUEST_NOTIFICATION          = (ID_OFFSET_INTERNAL + 0x003D),
+        ID_SYSTEM_METADATA                  = (ID_OFFSET_INTERNAL + 0x003E),
+                                            
+        ID_EXTERNAL_INTERFACE_OFFSET        = (ID_OFFSET_INTERNAL + 0x0040)
     };
 }
 }

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,14 @@
 
 #include "Module.h"
 
+
 namespace WPEFramework {
 
 namespace PluginHost {
-
+    /**
+     * IMPORTANT: If updating this class to add/remove/modify configuration options, ensure
+     * the documentation in docs/introduction/config.md is updated to reflect the changes!
+    */
     class EXTERNAL Config {
     private:
         class Substituter {
@@ -132,9 +136,7 @@ namespace PluginHost {
                     Add(_T("value"), &Value);
                     Add(_T("override"), &Override);
                 }
-                virtual ~Environment()
-                {
-                }
+                ~Environment() override = default;
                 Environment& operator=(const Environment& RHS)
                 {
                     Key = RHS.Key;
@@ -215,11 +217,12 @@ namespace PluginHost {
             class InputConfig : public Core::JSON::Container {
             public:
                 InputConfig()
+                    : Core::JSON::Container()
 #ifdef __WINDOWS__
-                    : Locator("127.0.0.1:9631")
+                    , Locator("127.0.0.1:9631")
                     , Type(InputHandler::VIRTUAL)
 #else
-                    : Locator("/tmp/keyhandler|0766")
+                    , Locator("/tmp/keyhandler|0766")
                     , Type(InputHandler::VIRTUAL)
 #endif
                     , OutputEnabled(true)
@@ -230,7 +233,8 @@ namespace PluginHost {
                     Add(_T("output"), &OutputEnabled);
                 }
                 InputConfig(const InputConfig& copy)
-                    : Locator(copy.Locator)
+                    : Core::JSON::Container()
+                    , Locator(copy.Locator)
                     , Type(copy.Type)
                     , OutputEnabled(copy.OutputEnabled)
                 {
@@ -251,6 +255,30 @@ namespace PluginHost {
                 Core::JSON::String Locator;
                 Core::JSON::EnumType<InputHandler::type> Type;
                 Core::JSON::Boolean OutputEnabled;
+            };
+
+            class Observables : public Core::JSON::Container {
+            public:
+                Observables& operator= (const Observables&);
+
+                Observables()
+                    : Core::JSON::Container()
+                    , ProxyStubPath()
+                    , PluginConfigPath() {
+                    Add(_T("proxystubpath"), &ProxyStubPath);
+                    Add(_T("configpath"), &PluginConfigPath);
+                }
+                Observables(const Observables& copy)
+                    : Core::JSON::Container()
+                    , ProxyStubPath(copy.ProxyStubPath)
+                    , PluginConfigPath(copy.PluginConfigPath) {
+                    Add(_T("proxystubpath"), &ProxyStubPath);
+                    Add(_T("configpath"), &PluginConfigPath);
+                }
+                ~Observables() override = default;
+
+                Core::JSON::String ProxyStubPath;
+                Core::JSON::String PluginConfigPath;
             };
 
 #ifdef PROCESSCONTAINERS_ENABLED
@@ -279,6 +307,32 @@ namespace PluginHost {
                 Core::JSON::String Logging;
             };
 
+#endif
+
+#ifdef HIBERNATE_SUPPORT_ENABLED
+            class HibernateConfig : public Core::JSON::Container {
+            public:
+                HibernateConfig()
+                    : Locator(_T("127.0.0.1:12345"))
+                {
+
+                    Add(_T("locator"), &Locator);
+                }
+                HibernateConfig(const HibernateConfig& copy)
+                    : Locator(copy.Locator)
+                {
+                    Add(_T("locator"), &Locator);
+                }
+                ~HibernateConfig() override = default;
+
+                HibernateConfig& operator=(const HibernateConfig& RHS)
+                {
+                    Locator = RHS.Locator;
+                    return (*this);
+                }
+
+                Core::JSON::String Locator;
+            };
 #endif
 
         public:
@@ -311,12 +365,15 @@ namespace PluginHost {
                 , Redirect(_T("http://127.0.0.1/Service/Controller/UI"))
                 , Signature(_T("TestSecretKey"))
                 , IdleTime(0)
+                , SoftKillCheckWaitTime(10)
+                , HardKillCheckWaitTime(4)
                 , IPV6(false)
-                , DefaultTraceCategories(false)
-                , DefaultWarningReportingCategories(false)
+                , LegacyInitialize(false)
+                , DefaultMessagingCategories(false)
                 , Process()
                 , Input()
                 , Configs()
+                , EthernetCard()
                 , Environments()
                 , ExitReasons()
                 , Latitude(51832547) // Divider 1.000.000
@@ -325,9 +382,12 @@ namespace PluginHost {
                 , ProcessContainers()
 #endif
                 , LinkerPluginPaths()
+                , Observe()
+#ifdef HIBERNATE_SUPPORT_ENABLED
+                , Hibernate()
+#endif
             {
                 // No IdleTime
-                Add(_T("version"), &Version);
                 Add(_T("model"), &Model);
                 Add(_T("port"), &Port);
                 Add(_T("binding"), &Binding);
@@ -342,14 +402,17 @@ namespace PluginHost {
                 Add(_T("communicator"), &Communicator);
                 Add(_T("signature"), &Signature);
                 Add(_T("idletime"), &IdleTime);
+                Add(_T("softkillcheckwaittime"), &SoftKillCheckWaitTime);
+                Add(_T("hardkillcheckwaittime"), &HardKillCheckWaitTime);
                 Add(_T("ipv6"), &IPV6);
-                Add(_T("tracing"), &DefaultTraceCategories); 
-                Add(_T("warningreporting"), &DefaultWarningReportingCategories); 
+                Add(_T("legacyinitialize"), &LegacyInitialize);
+                Add(_T("messaging"), &DefaultMessagingCategories);
                 Add(_T("redirect"), &Redirect);
                 Add(_T("process"), &Process);
                 Add(_T("input"), &Input);
                 Add(_T("plugins"), &Plugins);
                 Add(_T("configs"), &Configs);
+                Add(_T("ethernetcard"), &EthernetCard);
                 Add(_T("environments"), &Environments);
                 Add(_T("exitreasons"), &ExitReasons);
                 Add(_T("latitude"), &Latitude);
@@ -358,6 +421,10 @@ namespace PluginHost {
                 Add(_T("processcontainers"), &ProcessContainers);
 #endif
                 Add(_T("linkerpluginpaths"), &LinkerPluginPaths);
+                Add(_T("observe"), &Observe);
+#ifdef HIBERNATE_SUPPORT_ENABLED
+                Add(_T("hibernate"), &Hibernate);
+#endif
             }
             ~JSONConfig() override = default;
 
@@ -379,12 +446,15 @@ namespace PluginHost {
             Core::JSON::String Redirect;
             Core::JSON::String Signature;
             Core::JSON::DecUInt16 IdleTime;
+            Core::JSON::DecUInt8 SoftKillCheckWaitTime;
+            Core::JSON::DecUInt8 HardKillCheckWaitTime;
             Core::JSON::Boolean IPV6;
-            Core::JSON::String DefaultTraceCategories;
-            Core::JSON::String DefaultWarningReportingCategories; 
+            Core::JSON::Boolean LegacyInitialize;
+            Core::JSON::String DefaultMessagingCategories; 
             ProcessSet Process;
             InputConfig Input;
             Core::JSON::String Configs;
+            Core::JSON::String EthernetCard;
             Core::JSON::ArrayType<Plugin::Config> Plugins;
             Core::JSON::ArrayType<Environment> Environments;
             Core::JSON::ArrayType<Core::JSON::EnumType<PluginHost::IShell::reason>> ExitReasons;
@@ -394,6 +464,10 @@ namespace PluginHost {
             ProcessContainerConfig ProcessContainers;
 #endif
             Core::JSON::ArrayType<Core::JSON::String> LinkerPluginPaths;
+            Observables Observe;
+#ifdef HIBERNATE_SUPPORT_ENABLED
+            HibernateConfig Hibernate;
+#endif
         };
 
     public:
@@ -454,7 +528,10 @@ namespace PluginHost {
                 _priority = input.Priority.Value();
                 _OOMAdjust = input.OOMAdjust.Value();
                 _policy = input.Policy.Value();
-                _umask = input.Umask.Value();
+                if(input.Umask.IsSet() == true)
+                {
+                    _umask = input.Umask.Value();
+                }
             } 
 
         public:
@@ -482,7 +559,7 @@ namespace PluginHost {
             inline Core::ProcessInfo::scheduler Policy() const {
                 return(_policy);
             }
-            inline uint16_t UMask() const {
+            inline const Core::OptionalType<uint16_t>& UMask() const {
                 return(_umask);
             }
  
@@ -493,7 +570,7 @@ namespace PluginHost {
             int8_t _priority;
             int8_t _OOMAdjust;
             Core::ProcessInfo::scheduler _policy;
-            uint16_t _umask;
+            Core::OptionalType<uint16_t> _umask;
         };
 
     public:
@@ -501,27 +578,69 @@ namespace PluginHost {
         Config(const Config&) = delete;
         Config& operator=(const Config&) = delete;
 
-        #ifdef __WINDOWS__
-        #pragma warning(disable: 4355)
-        #endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         Config(Core::File& file, const bool background, Core::OptionalType<Core::JSON::Error>& error)
             : _background(background)
+            , _prefix()
+            , _webPrefix()
+            , _JSONRPCPrefix()
+            , _volatilePath()
+            , _persistentPath()
+            , _dataPath()
+            , _hashKey()
+            , _appPath()
+            , _systemPath()
+            , _configsPath()
+            , _proxyStubPath()
+            , _observableProxyStubPath()
+            , _postMortemPath()
+            , _pluginConfigPath()
+            , _accessor()
+            , _communicator()
+            , _binder()
+            , _redirect()
             , _security(nullptr)
+            , _model()
+            , _messagingCategories()
+            , _messagingCategoriesFile()
+            , _binding()
+            , _interface()
+            , _URL()
+            , _ethernetCard()
+            , _portNumber(0)
+            , _IPV6()
+            , _legacyInitialize(false)
+            , _idleTime(180)
+            , _softKillCheckWaitTime(3)
+            , _hardKillCheckWaitTime(10)
+            , _stackSize(0)
             , _inputInfo()
             , _processInfo()
             , _plugins()
             , _reasons()
             , _substituter(*this)
+            , _configLock()
+            #ifdef PROCESSCONTAINERS_ENABLED
+            , _ProcessContainersLogging()
+            #endif
+            , _linkerPluginPaths()
+            #ifdef HIBERNATE_SUPPORT_ENABLED
+            , _hibernateLocator()
+            #endif
         {
             JSONConfig config;
 
             config.IElement::FromFile(file, error);
 
             if (error.IsSet() == false) {
-                _webPrefix = '/' + config.Prefix.Value();
+                _prefix = config.Prefix.Value();
+                _webPrefix = '/' + _prefix;
                 _JSONRPCPrefix = '/' + config.JSONRPC.Value();
 #ifdef PROCESSCONTAINERS_ENABLED
                 _ProcessContainersLogging = config.ProcessContainers.Logging.Value();
+#endif
+#ifdef HIBERNATE_SUPPORT_ENABLED
+                _hibernateLocator = config.Hibernate.Locator.Value();
 #endif
                 _volatilePath = Core::Directory::Normalize(config.VolatilePath.Value());
                 _persistentPath = Core::Directory::Normalize(config.PersistentPath.Value());
@@ -529,30 +648,36 @@ namespace PluginHost {
                 _systemPath = Core::Directory::Normalize(config.SystemPath.Value());
                 _configsPath = Core::Directory::Normalize(config.Configs.Value());
                 _proxyStubPath = Core::Directory::Normalize(config.ProxyStubPath.Value());
+                if (config.Observe.IsSet() == true) {
+                    _observableProxyStubPath = Core::Directory::Normalize(config.Observe.ProxyStubPath.Value());
+                    _pluginConfigPath = Core::Directory::Normalize(config.Observe.PluginConfigPath.Value());
+                }
                 _postMortemPath = Core::Directory::Normalize(config.PostMortemPath.Value());
                 _appPath = Core::File::PathName(Core::ProcessInfo().Executable());
                 _hashKey = config.Signature.Value();
                 _communicator = Core::NodeId(config.Communicator.Value().c_str());
                 _redirect = config.Redirect.Value();
-                _version = config.Version.Value();
                 _idleTime = config.IdleTime.Value();
+                _softKillCheckWaitTime = config.SoftKillCheckWaitTime.Value();
+                _hardKillCheckWaitTime = config.HardKillCheckWaitTime.Value();
                 _IPV6 = config.IPV6.Value();
+                _legacyInitialize = config.LegacyInitialize.Value();
                 _binding = config.Binding.Value();
                 _interface = config.Interface.Value();
                 _portNumber = config.Port.Value();
                 _stackSize = config.Process.IsSet() ? config.Process.StackSize.Value() : 0;
                 _inputInfo.Set(config.Input);
                 _processInfo.Set(config.Process);
-                _latitude = config.Latitude.Value();
-                _longitude = config.Longitude.Value();
-
-                _traceCategoriesFile = config.DefaultTraceCategories.IsQuoted();
-                if (_traceCategoriesFile == true) {
-                    config.DefaultTraceCategories.SetQuoted(true);
+                _ethernetCard = config.EthernetCard.Value();
+                if( config.Latitude.IsSet() || config.Longitude.IsSet() ) {
+                    SYSLOG(Logging::Error, (_T("Support for Latitude and Longitude moved from Thunder configuration to plugin providing ILocation support")));
                 }
-                _traceCategories = config.DefaultTraceCategories.Value();
 
-                _warningReportingCategories = config.DefaultWarningReportingCategories.Value();
+                _messagingCategoriesFile = config.DefaultMessagingCategories.IsQuoted();
+                if (_messagingCategoriesFile == true) {
+                    config.DefaultMessagingCategories.SetQuoted(true);
+                }
+                _messagingCategories = config.DefaultMessagingCategories.Value();
 
                 if (config.Model.IsSet()) {
                     _model = config.Model.Value();
@@ -594,9 +719,7 @@ namespace PluginHost {
                     _linkerPluginPaths.push_back(itr.Current().Value());
             }
         }
-        #ifdef __WINDOWS__
-        #pragma warning(default: 4355)
-        #endif
+POP_WARNING()
         ~Config()
         {
             ASSERT(_security != nullptr);
@@ -604,25 +727,27 @@ namespace PluginHost {
         }
 
     public:
-        inline const string& Version() const
+        inline const string& Prefix() const
         {
-            return (_version);
+            Core::SafeSyncType<Core::CriticalSection> scopedLock(_configLock);
+            return (_prefix);
+        }
+        inline void SetPrefix(const string& newValue) {
+            Core::SafeSyncType<Core::CriticalSection> scopedLock(_configLock);
+            _prefix = newValue;
+            _webPrefix = '/' + _prefix;
         }
         inline const string& Model() const
         {
             return (_model);
         }
-        inline bool TraceCategoriesFile() const
+        inline bool MessagingCategoriesFile() const
         {
-            return (_traceCategoriesFile);
+            return (_messagingCategoriesFile);
         }
-        inline const string& TraceCategories() const
+        inline const string& MessagingCategories() const
         {
-            return (_traceCategories);
-        }
-        inline const string& WarningReportingCategories() const
-        {
-            return (_warningReportingCategories);
+            return (_messagingCategories);
         }
         inline const string& Redirect() const
         {
@@ -630,15 +755,22 @@ namespace PluginHost {
         }
         inline const string& WebPrefix() const
         {
+            Core::SafeSyncType<Core::CriticalSection> scopedLock(_configLock);
             return (_webPrefix);
         }
         inline const string& JSONRPCPrefix() const
         {
             return (_JSONRPCPrefix);
-        }
+        } 
 #ifdef PROCESSCONTAINERS_ENABLED
         inline const string& ProcessContainersLogging() const {
             return (_ProcessContainersLogging);
+        }
+#endif
+
+#ifdef HIBERNATE_SUPPORT_ENABLED
+        inline const string& HibernateLocator() const {
+            return (_hibernateLocator);
         }
 #endif
         inline const string& VolatilePath() const
@@ -648,6 +780,10 @@ namespace PluginHost {
         inline const string& PersistentPath() const
         {
             return (_persistentPath);
+        }
+        inline const string& PluginConfigPath() const
+        {
+            return (_pluginConfigPath);
         }
         inline const string& DataPath() const
         {
@@ -659,6 +795,7 @@ namespace PluginHost {
         }
         inline const Core::NodeId& Accessor() const
         {
+            Core::SafeSyncType<Core::CriticalSection> scopedLock(_configLock);
             return (_accessor);
         }
         inline const Core::NodeId& Communicator() const
@@ -680,6 +817,10 @@ namespace PluginHost {
         inline const string& ProxyStubPath() const
         {
             return (_proxyStubPath);
+        }
+        inline const string& ObservableProxyStubPath() const
+        {
+            return (_observableProxyStubPath);
         }
         inline const string& PostMortemPath() const
         {
@@ -707,7 +848,18 @@ namespace PluginHost {
             return (_substituter.Substitute(input, &plugin));
         }
         inline uint16_t IdleTime() const {
+            Core::SafeSyncType<Core::CriticalSection> scopedLock(_configLock);
             return (_idleTime);
+        }
+        inline void SetIdleTime(const uint16_t newValue)  {
+            Core::SafeSyncType<Core::CriticalSection> scopedLock(_configLock);
+            _idleTime = newValue;
+        }
+        inline uint8_t SoftKillCheckWaitTime() const {
+            return _softKillCheckWaitTime;
+        }
+        inline uint8_t HardKillCheckWaitTime() const {
+            return _hardKillCheckWaitTime;
         }
         inline const string& URL() const {
             return (_URL);
@@ -715,11 +867,8 @@ namespace PluginHost {
         inline uint32_t StackSize() const {
             return (_stackSize);
         }
-        inline int32_t Latitude() const {
-            return (_latitude);
-        }
-        inline int32_t Longitude() const {
-            return (_longitude);
+        inline string EthernetCard() const {
+            return _ethernetCard;
         }
         inline const InputInfo& Input() const {
             return(_inputInfo);
@@ -730,6 +879,10 @@ namespace PluginHost {
         inline bool IPv6() const {
             return (_IPV6);
         }
+        inline bool LegacyInitialize() const {
+            return (_legacyInitialize);
+        }
+
         const Plugin::Config* Plugin(const string& name) const {
             Core::JSON::ArrayType<Plugin::Config>::ConstIterator index(_plugins.Elements());
 
@@ -762,22 +915,26 @@ namespace PluginHost {
 
             if (_interface.empty() == false) {
                 Core::NodeId selectedNode = Plugin::Config::IPV4UnicastNode(_interface);
-
+    
+                _configLock.Lock();
                 if (selectedNode.IsValid() == true) {
                     _accessor = selectedNode;
                     result = _accessor;
+                    
                 }
             } else if (result.IsAnyInterface() == true) {
                 // TODO: We should iterate here over all interfaces to find a suitable IPv4 address or IPv6.
                 Core::NodeId selectedNode = Plugin::Config::IPV4UnicastNode(_interface);
 
+                _configLock.Lock();
                 if (selectedNode.IsValid() == true) {
                     _accessor = selectedNode;
                 }
             } else {
+                _configLock.Lock();
                 _accessor = result;
             }
-
+            string hostaddress;
             if (_accessor.IsValid() == false) {
 
                 // Let's go for the default and make the best of it :-)
@@ -788,19 +945,28 @@ namespace PluginHost {
                 value.sin_port = htons(_portNumber);
 
                 _accessor = value;
+
+                _accessor.PortNumber(_portNumber);
+                hostaddress = _accessor.HostAddress();
+                _configLock.Unlock();
                 SYSLOG(Logging::Startup, ("Invalid config information could not resolve to a proper IP"));
-            }
-
-            if (_portNumber == 80) {
-                _URL = string(_T("http://")) + _accessor.HostAddress() + _webPrefix;
             } else {
-                _URL = string(_T("http://")) + _accessor.HostAddress() + ':' + Core::NumberType<uint16_t>(_portNumber).Text() + _webPrefix;
+                _accessor.PortNumber(_portNumber);
+                hostaddress= _accessor.HostAddress();
+                _configLock.Unlock();
             }
 
-            _accessor.PortNumber(_portNumber);
+            
+            if (_portNumber == 80) {
+                _URL = string(_T("http://")) + hostaddress + WebPrefix();
+            } else {
+                _URL = string(_T("http://")) + hostaddress + ':' + Core::NumberType<uint16_t>(_portNumber).Text() + WebPrefix();
+            }
+            
 
             SYSLOG(Logging::Startup, (_T("Accessor: %s"), _URL.c_str()));
-            SYSLOG(Logging::Startup, (_T("Interface IP: %s"), _accessor.HostAddress().c_str()));
+            SYSLOG(Logging::Startup, (_T("Interface IP: %s"), hostaddress.c_str()));
+
         }
 
         inline const std::vector<std::string>& LinkerPluginPaths() const
@@ -841,6 +1007,7 @@ namespace PluginHost {
 
     private:
         const bool _background;
+        string _prefix; // store prefix to make it overridable
         string _webPrefix;
         string _JSONRPCPrefix;
         string _volatilePath;
@@ -851,35 +1018,41 @@ namespace PluginHost {
         string _systemPath;
         string _configsPath;
         string _proxyStubPath;
+        string _observableProxyStubPath;
         string _postMortemPath;
+        string _pluginConfigPath;
         Core::NodeId _accessor;
         Core::NodeId _communicator;
         Core::NodeId _binder;
         string _redirect;
         ISecurity* _security;
-        string _version;
         string _model;
-        string _traceCategories;
-        bool _traceCategoriesFile;
-        string _warningReportingCategories;
+        string _messagingCategories;
+        bool _messagingCategoriesFile;
         string _binding;
         string _interface;
         string _URL;
+        string _ethernetCard;
         uint16_t _portNumber;
         bool _IPV6;
+        bool _legacyInitialize;
         uint16_t _idleTime;
+        uint8_t _softKillCheckWaitTime;
+        uint8_t _hardKillCheckWaitTime;
         uint32_t _stackSize;
-        int32_t _latitude;
-        int32_t _longitude;
         InputInfo _inputInfo;
         ProcessInfo _processInfo;
         Core::JSON::ArrayType<Plugin::Config> _plugins;
         std::list<PluginHost::IShell::reason> _reasons;
         Substituter _substituter;
+        mutable Core::CriticalSection _configLock;
 #ifdef PROCESSCONTAINERS_ENABLED
         string _ProcessContainersLogging;
 #endif
         std::vector<std::string> _linkerPluginPaths;
+#ifdef HIBERNATE_SUPPORT_ENABLED
+        string _hibernateLocator;
+#endif
     };
 }
 }

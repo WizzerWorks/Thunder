@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,9 +36,10 @@ namespace Core {
             return msg;
         }
 
-        /* static */ constexpr size_t Error::kContextMaxLength;
 
-        /* static */ char IElement::NullTag[] = "null";
+        /* static */ char IElement::NullTag[5] = { 'n', 'u', 'l', 'l', '\0' };
+        /* static */ char IElement::TrueTag[5] = { 't', 'r', 'u', 'e', '\0' };
+        /* static */ char IElement::FalseTag[6] = { 'f', 'a', 'l', 's', 'e', '\0' };
 
         string Variant::GetDebugString(const TCHAR name[], int indent, int arrayIndex) const
         {

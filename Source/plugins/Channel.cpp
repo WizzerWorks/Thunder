@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +24,9 @@ namespace PluginHost {
 
     /* static */ RequestPool Channel::_requestAllocator(10);
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     Channel::Channel(const SOCKET& connector, const Core::NodeId& remoteId)
         : BaseClass(true, false, 5, _requestAllocator, false, connector, remoteId, 1024, 1024)
-        , _adminLock()
         , _ID(0)
         , _nameOffset(~0)
         , _state(WEB)
@@ -40,9 +37,7 @@ namespace PluginHost {
         , _sendQueue()
     {
     }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
     /* virtual */ Channel::~Channel()
     {

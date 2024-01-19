@@ -1,3 +1,21 @@
+/*
+ * If not stated otherwise in this file or this component's LICENSE file the
+ * following copyright and licenses apply:
+ *
+ * Copyright 2020 Metrological
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #pragma once
 
 #include "Module.h"
@@ -152,6 +170,9 @@ namespace PluginHost {
                     _adminLock.Unlock();
                 }
             }
+            void Unavailable(const string& name, PluginHost::IShell* plugin) override
+            {
+            }
 
         private:
             mutable Core::CriticalSection _adminLock;
@@ -208,7 +229,7 @@ namespace PluginHost {
 
     private:
         HANDLER _reporter;
-        Core::Sink<Sink> _sink;
+        Core::SinkType<Sink> _sink;
     };
 }
 
@@ -223,35 +244,47 @@ namespace RPC {
         SmartInterfaceType(const SmartInterfaceType<INTERFACE, ENGINE>&) = delete;
         SmartInterfaceType<INTERFACE, ENGINE>& operator=(const SmartInterfaceType<INTERFACE, ENGINE>&) = delete;
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         SmartInterfaceType()
             : _controller(nullptr)
             , _administrator()
             , _monitor(*this)
+            , _connectionId(~0)
         {
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-        virtual ~SmartInterfaceType() = default;
+POP_WARNING()
+        virtual ~SmartInterfaceType()
+        {
+            ASSERT(_controller == nullptr);
+        }
 
     public:
+        uint32_t ConnectionId() const {
+            return (_connectionId);
+        }
         bool IsOperational() const
         {
             return (_monitor.IsOperational());
         }
         uint32_t Open(const uint32_t waitTime, const Core::NodeId& node, const string& callsign)
         {
+            Core::IUnknown* controller = RPC::ConnectorController::Instance().Controller();
+
             ASSERT(_controller == nullptr);
 
+            if (controller != nullptr) {
+                // Seems like we already have a connection to the IShell of the Controller plugin, reuse it.
+                _controller = controller->QueryInterface<PluginHost::IShell>();
+                controller->Release();
+            }
             if (_controller == nullptr) {
-                _controller = _administrator.template Aquire<PluginHost::IShell>(waitTime, node, _T(""), ~0);
-
-                if (_controller != nullptr) {
-
-                    _monitor.Register(_controller, callsign);
+                _controller = _administrator.template Acquire<PluginHost::IShell>(waitTime, node, _T(""), ~0);
+            }
+            if (_controller != nullptr) {
+                _monitor.Register(_controller, callsign);
+                Core::ProxyType<CommunicatorClient> channel(_administrator.Communicator(node));
+                if (channel.IsValid() == true) {
+                    _connectionId = channel->ConnectionId();
                 }
             }
 
@@ -268,9 +301,9 @@ namespace RPC {
             return (Core::ERROR_NONE);
         }
         template <typename EXPECTED_INTERFACE>
-        EXPECTED_INTERFACE* Aquire(const uint32_t waitTime, const Core::NodeId& nodeId, const string className, const uint32_t version = ~0)
+        EXPECTED_INTERFACE* Acquire(const uint32_t waitTime, const Core::NodeId& nodeId, const string className, const uint32_t version = ~0)
         {
-            return (_administrator.template Aquire<EXPECTED_INTERFACE>(waitTime, nodeId, className, version));
+            return (_administrator.template Acquire<EXPECTED_INTERFACE>(waitTime, nodeId, className, version));
         }
 
         INTERFACE* Interface()
@@ -280,6 +313,14 @@ namespace RPC {
         const INTERFACE* Interface() const
         {
             return (_monitor.Interface());
+        }
+        PluginHost::IShell* ControllerInterface()
+        {
+            return _controller;
+        }
+        const PluginHost::IShell* ControllerInterface() const
+        {
+            return _controller;
         }
 
         // Allow a derived class to take action on a new interface, or almost dissapeared interface..
@@ -318,6 +359,104 @@ namespace RPC {
         PluginHost::IShell* _controller;
         ConnectorType<ENGINE> _administrator;
         Monitor _monitor;
+        uint32_t _connectionId;
     };
+
+    template <typename INTERFACE, Core::ProxyType<RPC::IIPCServer> ENGINE() = DefaultInvokeServer>
+    class SmartControllerInterfaceType {
+
+    public:
+        SmartControllerInterfaceType(const SmartControllerInterfaceType<INTERFACE, ENGINE>&) = delete;
+        SmartControllerInterfaceType<INTERFACE, ENGINE>& operator=(const SmartControllerInterfaceType<INTERFACE, ENGINE>&) = delete;
+
+        SmartControllerInterfaceType()
+            : _controller(nullptr)
+            , _administrator()
+            , _connectionId(~0)
+        {
+        }
+        
+        ~SmartControllerInterfaceType()
+        {
+            ASSERT(_controller == nullptr);
+        }
+
+    public:
+        uint32_t ConnectionId() const {
+            return (_connectionId);
+        }
+        bool IsOperational() const
+        {
+            return (_controller != nullptr);
+        }
+        uint32_t Open(const uint32_t waitTime, const Core::NodeId& node)
+        {
+            Core::IUnknown* controller = RPC::ConnectorController::Instance().Controller();
+
+            ASSERT(_controller == nullptr);
+
+            if (controller != nullptr) {
+                // Seems like we already have a connection to the IShell of the Controller plugin, reuse it.
+                _controller = controller->QueryInterface<PluginHost::IShell>();
+                controller->Release();
+            }
+            if (_controller == nullptr) {
+                _controller = _administrator.template Acquire<PluginHost::IShell>(waitTime, node, _T(""), ~0);
+            }
+            if (_controller != nullptr) {
+                Core::ProxyType<CommunicatorClient> channel(_administrator.Communicator(node));
+                if (channel.IsValid() == true) {
+                    _connectionId = channel->ConnectionId();
+                }
+            }
+
+            return (_controller != nullptr ? Core::ERROR_NONE : Core::ERROR_UNAVAILABLE);
+        }
+        uint32_t Close(const uint32_t waitTime)
+        {
+            if (_controller != nullptr) {
+                _controller->Release();
+                _controller = nullptr;
+            }
+
+            return (Core::ERROR_NONE);
+        }
+
+        INTERFACE* Interface()
+        {
+            INTERFACE* result = nullptr;
+            if(_controller != nullptr) {
+                result = _controller->QueryInterface<INTERFACE>();
+            }
+            return result;
+        }
+        const INTERFACE* Interface() const
+        {
+            INTERFACE* result = nullptr;
+            if(_controller != nullptr) {
+                result = _controller->QueryInterface<INTERFACE>();
+            }
+            return result;
+        }
+        PluginHost::IShell* ControllerInterface()
+        {
+            return _controller;
+        }
+        const PluginHost::IShell* ControllerInterface() const
+        {
+            return _controller;
+        }
+
+        static Core::NodeId Connector()
+        {
+            return SmartInterfaceType<PluginHost::IShell>::Connector();
+        }
+
+    private:
+        PluginHost::IShell* _controller;
+        ConnectorType<ENGINE> _administrator;
+        uint32_t _connectionId;
+    };
+
 }
 }

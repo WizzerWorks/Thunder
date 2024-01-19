@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ namespace WPEFramework {
 namespace Core {
 
     struct EXTERNAL IWorkerPool {
-        virtual ~IWorkerPool(){};
+        virtual ~IWorkerPool() = default;
 
         template <typename IMPLEMENTATION>
         class JobType : public ThreadPool::JobType<IMPLEMENTATION> {
@@ -43,48 +43,59 @@ namespace Core {
             }
             ~JobType()
             {
-                Core::IWorkerPool::Instance().Revoke(ThreadPool::JobType<IMPLEMENTATION>::Reset());
+                Revoke();
             }
 
         public:
             bool Submit()
             {
-                Core::ProxyType<Core::IDispatch> job(ThreadPool::JobType<IMPLEMENTATION>::Aquire());
+                ProxyType<IDispatch> job(ThreadPool::JobType<IMPLEMENTATION>::Submit());
 
                 if (job.IsValid()) {
-                    Core::IWorkerPool::Instance().Submit(job);
+                    IWorkerPool::Instance().Submit(job);
                 }
              
-                return (job.IsValid());
-            }
-            bool Schedule(const Core::Time& time)
-            {
-                Core::ProxyType<Core::IDispatch> job(ThreadPool::JobType<IMPLEMENTATION>::Aquire());
-
-                if (job.IsValid()) {
-                    Core::IWorkerPool::Instance().Schedule(time, job);
-                }
-                return (job.IsValid());
+                return (ThreadPool::JobType<IMPLEMENTATION>::IsIdle() == false);
             }
             bool Reschedule(const Core::Time& time)
             {
-                Core::ProxyType<Core::IDispatch> job(ThreadPool::JobType<IMPLEMENTATION>::Forced());
+                bool rescheduled = false;
 
-                ASSERT(job.IsValid() == true);
+                Core::ProxyType<IDispatch> job(ThreadPool::JobType<IMPLEMENTATION>::Reschedule(time));
 
-                return (Core::IWorkerPool::Instance().Reschedule(time, job));
+                if (job.IsValid() == true) {
+
+                    job = ThreadPool::JobType<IMPLEMENTATION>::Revoke();
+
+                    if (job.IsValid() == true) {
+                        rescheduled = (IWorkerPool::Instance().Revoke(job) == Core::ERROR_NONE);
+                        ThreadPool::JobType<IMPLEMENTATION>::Revoked();
+                    }
+
+                    job = (ThreadPool::JobType<IMPLEMENTATION>::Idle());
+
+                    if (job.IsValid() == true) {
+                        IWorkerPool::Instance().Schedule(time, job);
+                    }
+                }
+
+                return (rescheduled && (ThreadPool::JobType<IMPLEMENTATION>::IsIdle() == false));
             }
             void Revoke()
             {
-                Core::IWorkerPool::Instance().Revoke(ThreadPool::JobType<IMPLEMENTATION>::Reset());
+                Core::ProxyType<IDispatch> job(ThreadPool::JobType<IMPLEMENTATION>::Revoke());
+
+                if (job.IsValid() == true) {
+                    Core::IWorkerPool::Instance().Revoke(job);
+                    ThreadPool::JobType<IMPLEMENTATION>::Revoked();
+                }
             }
         };
 
         struct Metadata {
-            uint32_t Pending;
-            uint32_t Occupation;
+            std::vector<string> Pending;
             uint8_t Slots;
-            uint32_t* Slot;
+            ThreadPool::Metadata* Slot;
         };
 
         static void Assign(IWorkerPool* instance);
@@ -92,10 +103,10 @@ namespace Core {
         static bool IsAvailable();
 
         virtual ::ThreadId Id(const uint8_t index) const = 0;
-        virtual void Submit(const Core::ProxyType<Core::IDispatch>& job) = 0;
-        virtual void Schedule(const Core::Time& time, const Core::ProxyType<Core::IDispatch>& job) = 0;
-        virtual bool Reschedule(const Core::Time& time, const Core::ProxyType<Core::IDispatch>& job) = 0;
-        virtual uint32_t Revoke(const Core::ProxyType<Core::IDispatch>& job, const uint32_t waitTime = Core::infinite) = 0;
+        virtual void Submit(const Core::ProxyType<IDispatch>& job) = 0;
+        virtual void Schedule(const Core::Time& time, const Core::ProxyType<IDispatch>& job) = 0;
+        virtual bool Reschedule(const Core::Time& time, const Core::ProxyType<IDispatch>& job) = 0;
+        virtual uint32_t Revoke(const Core::ProxyType<IDispatch>& job, const uint32_t waitTime = Core::infinite) = 0;
         virtual void Join() = 0;
         virtual const Metadata& Snapshot() const = 0;
     };
@@ -115,7 +126,7 @@ namespace Core {
                 , _pool(copy._pool)
             {
             }
-            Timer(IWorkerPool* pool, const Core::ProxyType<Core::IDispatch>& job)
+            Timer(IWorkerPool* pool, const ProxyType<IDispatch>& job)
                 : _job(job)
                 , _pool(pool)
             {
@@ -144,24 +155,175 @@ namespace Core {
             }
 
         private:
-            Core::ProxyType<Core::IDispatch> _job;
+            ProxyType<IDispatch> _job;
             IWorkerPool* _pool;
         };
+        class Scheduler : public ThreadPool::IScheduler {
+        public:
+            Scheduler() = delete;
+            Scheduler(const Scheduler&) = delete;
+            Scheduler& operator=(const Scheduler&) = delete;
 
+            Scheduler(IWorkerPool* pool, Core::TimerType<Timer>& timer) : _pool(pool), _timer(timer) {
+            }
+            ~Scheduler() override = default;
+
+        public:
+            // Inherited via IScheduler
+            void Schedule(const Time& time, const ProxyType<IDispatch>& job) override {
+                _timer.Schedule(time, Timer(_pool, job));
+            }
+
+        private:
+            IWorkerPool* _pool;
+            Core::TimerType<Timer>& _timer;
+        };
+
+        #ifdef __CORE_WARNING_REPORTING__
+        class DispatchedJobMonitor : public ThreadPool::IDispatchedJobMonitor {
+        /**
+        * @brief DispatchedJobMonitor monitor/maintains a list of Dispatched Jobs for analysis.
+        *        This object periodically schedule an internal worker job to walk-thru the
+        *        active/in-progress dispatched jobs, analyse and report warning messages
+        *        based on the configured bounds values.
+        *
+        */
+        private:
+            class EXTERNAL MontiorJob : public IDispatch {
+            public:
+                MontiorJob() = delete;
+                MontiorJob(const MontiorJob&) = delete;
+                MontiorJob& operator=(const MontiorJob&) = delete;
+
+                MontiorJob(DispatchedJobMonitor& parent)
+                    : _parent(parent)
+                {
+                }
+                ~MontiorJob() override = default;
+
+                void Dispatch() override
+                {
+                    _parent.AnalyseAndReportDispatchedJobs();
+                    _parent.ScheduleMonitorJob();
+                }
+
+            private:
+                DispatchedJobMonitor& _parent;
+            };
+        public:
+            static constexpr uint32_t DefaultScheduleIntervalInMilliSeconds = 10000;
+            DispatchedJobMonitor() = delete;
+            DispatchedJobMonitor(const DispatchedJobMonitor&) = delete;
+            DispatchedJobMonitor& operator=(const DispatchedJobMonitor&) = delete;
+
+            DispatchedJobMonitor(WorkerPool& parent, uint32_t intervalInMilliSeconds)
+                : _parent(parent)
+                , _lock()
+                , _dispatchedJobList()
+                , _monitorJob()
+                , _isActive(false)
+                , _intervalInMilliSeconds(intervalInMilliSeconds)
+            {
+            }
+            ~DispatchedJobMonitor() override = default;
+
+            void Start()
+            {
+                _lock.Lock();
+
+                if (!IsActive()) {
+                    _monitorJob = Core::ProxyType<IDispatch>(ProxyType<MontiorJob>::Create(*this));
+                    _isActive = true;
+                    _parent.Schedule(Core::Time::Now().Add(_intervalInMilliSeconds), _monitorJob);
+                }
+
+                _lock.Unlock();
+            }
+            void Stop()
+            {
+                _lock.Lock();
+
+                if (IsActive()) {
+                    _isActive = false;
+                    _parent.Revoke(_monitorJob);
+                    _dispatchedJobList.clear();
+                    _monitorJob.Release();
+                }
+
+                _lock.Unlock();
+            }
+            void InsertDispatchedJobMetaData(const ThreadPool::DispatchedJobMetaData& data) override
+            {
+                _lock.Lock();
+                _dispatchedJobList.emplace_back(data);
+                _lock.Unlock();
+            }
+            void RemoveDispatchedJobMetaData(const ThreadPool::DispatchedJobMetaData& data) override
+            {
+                _lock.Lock();
+                _dispatchedJobList.remove(data);
+                _lock.Unlock();
+            }
+            void AnalyseAndReportDispatchedJobs()
+            {
+                _lock.Lock();
+
+                if (_dispatchedJobList.size() > 0 && IsActive()) {
+                    for (auto &job : _dispatchedJobList) {
+                        ++job.ReportRunCount;
+                        REPORT_OUTOFBOUNDS_WARNING_EX(WarningReporting::JobActiveForTooLong, job.CallSign.c_str(),
+                        static_cast<uint32_t>((Time::Now().Ticks() - job.DispatchedTime) / Time::TicksPerMillisecond));
+                    }
+                }
+
+                _lock.Unlock();
+
+            }
+            void ScheduleMonitorJob()
+            {
+                // Submit the monitor job to the scheduler.
+                _lock.Lock();
+                if (IsActive()){
+                    _parent.Schedule(Core::Time::Now().Add(_intervalInMilliSeconds), _monitorJob);
+                }
+                _lock.Unlock();
+            }
+        private:
+            bool IsActive()
+            {
+                //DO NOT use Lock here..
+                return _isActive;
+            }
+        private:
+            WorkerPool& _parent;
+            CriticalSection _lock;
+            std::list<ThreadPool::DispatchedJobMetaData> _dispatchedJobList;
+            Core::ProxyType<IDispatch> _monitorJob;
+            bool _isActive;
+            uint32_t _intervalInMilliSeconds;
+    };
+    #endif
     public:
         WorkerPool(const WorkerPool&) = delete;
         WorkerPool& operator=(const WorkerPool&) = delete;
 
-        WorkerPool(const uint8_t threadCount, const uint32_t stackSize, const uint32_t queueSize, Core::ThreadPool::IDispatcher* dispatcher)
-            : _threadPool(threadCount, stackSize, queueSize, dispatcher)
-            , _external(_threadPool.Queue(), dispatcher)
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
+        WorkerPool(const uint8_t threadCount, const uint32_t stackSize, const uint32_t queueSize, ThreadPool::IDispatcher* dispatcher, ThreadPool::ICallback* callback = nullptr)
+            : _scheduler(this, _timer)
+            , _threadPool(threadCount, stackSize, queueSize, dispatcher, &_scheduler, &_external, callback)
+            , _external(_threadPool, dispatcher)
             , _timer(1024 * 1024, _T("WorkerPoolType::Timer"))
             , _metadata()
             , _joined(0)
+            #ifdef __CORE_WARNING_REPORTING__
+            , _dispatchedJobMonitor(*this, static_cast<uint32_t>(DispatchedJobMonitor::DefaultScheduleIntervalInMilliSeconds))
+            #endif 
         {
-            _metadata.Slots = threadCount + 1;
-            _metadata.Slot = new uint32_t[threadCount + 1];
+            _metadata.Slots = threadCount + 2;
+            _metadata.Slot = new Core::ThreadPool::Metadata[threadCount + 2];
         }
+POP_WARNING()
+
         ~WorkerPool()
         {
             _threadPool.Stop();
@@ -169,37 +331,48 @@ namespace Core {
         }
 
     public:
-        void Submit(const Core::ProxyType<Core::IDispatch>& job) override
+        void Submit(const Core::ProxyType<IDispatch>& job) override
         {
+            // A job should always be submitted only once, see if te offered job does not reside in the _timer...
+            ASSERT(_timer.HasEntry(Timer(this, job)) == false);
+
             _threadPool.Submit(job, Core::infinite);
         }
-        void Schedule(const Core::Time& time, const Core::ProxyType<Core::IDispatch>& job) override
+        void Schedule(const Core::Time& time, const Core::ProxyType<IDispatch>& job) override
         {
-            _timer.Schedule(time, Timer(this, job));
+            if (time > Core::Time::Now()) {
+                ASSERT(job.IsValid() == true);
+                ASSERT(_timer.HasEntry(Timer(this, job)) == false);
+
+                _timer.Schedule(time, Timer(this, job));
+            }
+            else {
+                _threadPool.Submit(job, Core::infinite);
+            }
         }
-        bool Reschedule(const Core::Time& time, const Core::ProxyType<Core::IDispatch>& job) override
+        bool Reschedule(const Core::Time& time, const Core::ProxyType<IDispatch>& job) override
         {
-            bool rescheduled = false;
-            if (_timer.Revoke(Timer(this, job)) == true) {
-                rescheduled = true;
-                if (time > Core::Time::Now()) {
-                    _timer.Schedule(time, Timer(this, job));
-                }
-                else {
-                    _threadPool.Submit(job, Core::infinite);
+            ASSERT(job.IsValid() == true);
+
+            bool revoked = (Revoke(job) != Core::ERROR_UNKNOWN_KEY);
+            Schedule(time, job);
+            return (revoked);
+        }
+        uint32_t Revoke(const Core::ProxyType<IDispatch>& job, const uint32_t waitTime = Core::infinite) override
+        {
+            uint32_t result(_timer.Revoke(Timer(this, job)) ? Core::ERROR_NONE : Core::ERROR_UNKNOWN_KEY);
+
+            uint32_t report = _threadPool.Revoke(job, waitTime);
+
+            if (report == Core::ERROR_UNKNOWN_KEY) {
+                report = _external.Completed(job, waitTime);
+                
+                if ( (report != Core::ERROR_UNKNOWN_KEY) && (result == Core::ERROR_UNKNOWN_KEY) ) {
+                    result = report;
                 }
             }
-            return (rescheduled);
-        }
-        uint32_t Revoke(const Core::ProxyType<Core::IDispatch>& job, const uint32_t waitTime = Core::infinite) override
-        {
-            _timer.Revoke(Timer(this, job));
 
-            uint32_t result = _threadPool.Revoke(job, waitTime);
-
-            uint32_t outcome = _external.Completed(job, waitTime);
-
-            return (outcome != Core::ERROR_NONE ? outcome : result);
+            return (result);
         }
         void Join() override
         {
@@ -221,38 +394,43 @@ namespace Core {
 
             return (result);
         }
-        virtual const Metadata& Snapshot() const
+        const Metadata& Snapshot() const
         {
-
-            _metadata.Pending = _threadPool.Pending();
-            _metadata.Occupation = _threadPool.Active() + _external.IsActive();
-            _metadata.Slot[0] = _external.Runs();
-
-            _threadPool.Runs(_threadPool.Count(), &(_metadata.Slot[1]));
-
+            _metadata.Slot[0].WorkerId = _timer.ThreadId();
+            _metadata.Slot[0].Runs = _timer.Pending();
+            _metadata.Slot[0].Job = string(_T("WorkerPool::Timer"));
+            _external.Info(_metadata.Slot[1]);
+            _threadPool.Snapshot(_threadPool.Count(), &(_metadata.Slot[2]), _metadata.Pending);
+            _metadata.Slot[1].WorkerId = _joined;
             return (_metadata);
         }
         void Run()
         {
             _threadPool.Run();
+            #ifdef __CORE_WARNING_REPORTING__
+            _threadPool.SetDispatchedJobMonitor(&_dispatchedJobMonitor);
+            _dispatchedJobMonitor.Start();
+            #endif
         }
         void Stop()
         {
+            #ifdef __CORE_WARNING_REPORTING__
+            _dispatchedJobMonitor.Stop();
+            _threadPool.ResetDispatchedJobMonitor();
+            #endif
             _threadPool.Stop();
         }
 
-    protected:
-        inline void Shutdown()
-        {
-            _threadPool.Queue().Disable();
-        }
-
     private:
+        Scheduler _scheduler;
         ThreadPool _threadPool;
         ThreadPool::Minion _external;
         Core::TimerType<Timer> _timer;
         mutable Metadata _metadata;
         ::ThreadId _joined;
+        #ifdef __CORE_WARNING_REPORTING__
+        DispatchedJobMonitor _dispatchedJobMonitor;
+        #endif
     };
 }
 }

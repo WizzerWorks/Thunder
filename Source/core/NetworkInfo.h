@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -295,6 +295,9 @@ namespace Core {
 
     class EXTERNAL AdapterIterator {
     public:
+        static uint8_t constexpr MacSize = 6;
+
+    public:
         inline AdapterIterator()
             : _index(static_cast<uint16_t>(~0))
         {
@@ -364,6 +367,7 @@ namespace Core {
         {
             return (IPV6AddressIterator(_index));
         }
+
         bool IsUp() const;
         bool IsRunning() const;
         uint32_t Up(const bool enabled);
@@ -375,6 +379,7 @@ namespace Core {
 
         string MACAddress(const char delimiter) const;
         void MACAddress(uint8_t buffer[], const uint8_t length) const;
+        uint32_t MACAddress(const uint8_t buffer[6]);
 
         uint32_t Add(const IPNode& address);
         uint32_t Delete(const IPNode& address);
@@ -569,6 +574,7 @@ namespace Core {
         uint32_t Gateway(const IPNode& network, const NodeId& gateway);
         void Update(const struct rtattr* rtatp, const uint16_t length);
         void Addresses();
+        uint32_t MAC(const uint8_t buffer[6]);
 
     private:
         mutable Core::CriticalSection _adminLock;
@@ -581,6 +587,9 @@ namespace Core {
     };
 
     class EXTERNAL AdapterIterator {
+    public:
+        static uint8_t constexpr MacSize = 6;
+
     public:
         AdapterIterator();
         AdapterIterator(const uint16_t index);
@@ -624,7 +633,7 @@ namespace Core {
         }
         inline string MACAddress(const char delimiter) const
         {
-            uint8_t MAC[6];
+            uint8_t MAC[MacSize];
             string result;
 
             ASSERT(IsValid());
@@ -640,6 +649,12 @@ namespace Core {
             ASSERT(IsValid());
 
             (*_index)->MAC(buffer, length);
+        }
+        uint32_t MACAddress(const uint8_t buffer[6]) 
+        {
+            ASSERT(IsValid());
+
+            return((*_index)->MAC(buffer));
         }
         inline IPV4AddressIterator IPV4Addresses() const {
             ASSERT(IsValid());

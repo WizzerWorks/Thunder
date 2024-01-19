@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -197,9 +197,7 @@ namespace Core {
 
             ASSERT(offset + size <= RHS.m_Size);
         }
-        virtual ~DataElement()
-        {
-        }
+        virtual ~DataElement() = default;
 
         inline DataElement& operator=(const DataElement& RHS)
         {
@@ -230,7 +228,10 @@ namespace Core {
                 m_Buffer = newPointer;
                 m_Size = (adjust < m_Size ? (m_Size - adjust) : 0);
                 m_MaxSize = (adjust < m_MaxSize ? (m_MaxSize - adjust) : 0);
-                TRACE_L1("Aligning the memory buffer by %d bytes to %p !!!\n\n", adjust, m_Buffer);
+
+                if (adjust != 0) {
+                    TRACE_L1("Aligning the memory buffer by %d bytes to %p !!!", adjust, m_Buffer);
+                }
             }
         }
         inline uint64_t AllocatedSize() const
@@ -305,7 +306,7 @@ namespace Core {
 
             if (Size(size) == true) {
                 // Shift all data back the beginning in..
-                ::memrcpy(&m_Buffer[static_cast<size_t>(offset)], &m_Buffer[static_cast<size_t>(offset) + size], static_cast<size_t>(m_Size - offset));
+                ::memmove(&m_Buffer[static_cast<size_t>(offset)], &m_Buffer[static_cast<size_t>(offset) + size], static_cast<size_t>(m_Size - offset));
 
                 // Now the total size is smaller, adjust
                 m_Size += size;

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,17 @@ namespace PluginHost {
             //! @}
             virtual void Activated(const string& callsign, IShell* plugin) = 0;
             virtual void Deactivated(const string& callsign, IShell* plugin) = 0;
+            virtual void Unavailable(const string& callsign, IShell* plugin) = 0;
+        };
+
+        struct ILifeTime : virtual public Core::IUnknown {
+
+            enum { ID = RPC::ID_PLUGIN_LIFETIME };
+
+            ~ILifeTime() override = default;
+
+            virtual void Initialize(const string& callsign, IShell* plugin) = 0;
+            virtual void Deinitialized(const string& callsign, IShell* plugin) = 0;
         };
 
         ~IPlugin() override = default;
@@ -86,7 +97,7 @@ namespace PluginHost {
         virtual string Information() const = 0;
     };
 
-    /* @stubgen:skip */
+    /* @stubgen:omit */
     struct IPluginExtended : public IPlugin {
 
         enum { ID = RPC::ID_PLUGINEXTENDED };
@@ -102,6 +113,30 @@ namespace PluginHost {
         virtual void Detach(PluginHost::Channel& channel) = 0;
     };
 
+    struct EXTERNAL ICompositPlugin : public virtual Core::IUnknown {
+        enum { ID = RPC::ID_COMPOSIT_PLUGIN };
+
+        struct EXTERNAL ICallback : public virtual Core::IUnknown {
+            enum { ID = RPC::ID_COMPOSIT_PLUGIN_CALLBACK };
+
+            ~ICallback() override = default;
+
+            virtual void Created(const string& callsign, IShell* plugin) = 0;
+            virtual void Destroy(const string& callsign, IShell* plugin) = 0;
+
+            virtual void Activated(const string& callsign, IShell* plugin) = 0;
+            virtual void Deactivated(const string& callsign, IShell* plugin) = 0;
+            virtual void Unavailable(const string& callsign, IShell* plugin) = 0;
+        };
+
+        ~ICompositPlugin() override = default;
+
+        static constexpr TCHAR Delimiter = '/';
+
+        virtual uint32_t Callback(ICallback*) = 0;
+    };
+
+    /* @stubgen:omit */
     struct IWeb : virtual public Core::IUnknown {
 
         enum { ID = RPC::ID_WEB };
@@ -125,6 +160,7 @@ namespace PluginHost {
         virtual Core::ProxyType<Web::Response> Process(const Web::Request& request) = 0;
     };
 
+    /* @stubgen:omit */
     struct IWebSocket : virtual public Core::IUnknown {
 
         enum { ID = RPC::ID_WEBSOCKET };
@@ -148,6 +184,7 @@ namespace PluginHost {
         virtual Core::ProxyType<Core::JSON::IElement> Inbound(const uint32_t ID, const Core::ProxyType<Core::JSON::IElement>& element) = 0;
     };
 
+    /* @stubgen:omit */
     struct ITextSocket : virtual public Core::IUnknown {
 
         enum { ID = RPC::ID_TEXTSOCKET };
@@ -162,6 +199,7 @@ namespace PluginHost {
         virtual string Inbound(const uint32_t ID, const string& value) = 0;
     };
 
+    /* @stubgen:omit */
     struct IChannel : virtual public Core::IUnknown {
 
         enum { ID = RPC::ID_CHANNEL };
@@ -183,6 +221,7 @@ namespace PluginHost {
         virtual uint32_t Outbound(const uint32_t ID, uint8_t data[], const uint16_t length) const = 0;
     };
 
+    /* @stubgen:omit */
     struct ISecurity : virtual public Core::IUnknown {
 
         enum { ID = RPC::ID_SECURITY };
@@ -213,11 +252,14 @@ namespace PluginHost {
 
         ~IAuthenticate() override = default;
 
-        virtual uint32_t CreateToken(const uint16_t length, const uint8_t buffer[], string& token) = 0;
+        virtual Core::hresult CreateToken(const uint16_t length /* @in */, const uint8_t buffer[] /* @in @length:length */, string& token /* @out */) = 0;
         virtual ISecurity* Officer(const string& token) = 0;
     };
 
 } // namespace PluginHost
 } // namespace WPEFramework
+
+
+#include "IShell.h" // needed for the proxy/stub generation
 
 #endif

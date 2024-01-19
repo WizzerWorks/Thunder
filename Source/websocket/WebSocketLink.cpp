@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -91,14 +91,8 @@ namespace Web {
                         ::memmove(&dataFrame[2], &(dataFrame[4]), usedSize);
                     }
                 } else {
-                    uint32_t value;
-                    // Generate a new mask value
                     uint8_t maskKey[4];
-                    Crypto::Random(value);
-                    maskKey[0] = value & 0xFF;
-                    maskKey[1] = (value >> 8) & 0xFF;
-                    maskKey[2] = (value >> 16) & 0xFF;
-                    maskKey[3] = (value >> 24) & 0xFF;
+                    GenerateMaskKey(maskKey);
 
                     // Mask and insert the bytes on the right spots
                     uint8_t* source = &dataFrame[usedSize - 1 + 4];
@@ -138,21 +132,29 @@ namespace Web {
                 result += usedSize;
             }
 
-            if (((_controlStatus & (REQUEST_CLOSE | REQUEST_PING | REQUEST_PONG)) != 0) && ((result + 1) < maxSendSize)) {
+            if (((_controlStatus & (REQUEST_CLOSE | REQUEST_PING | REQUEST_PONG)) != 0) && (result + (((_setFlags & MASKING_FRAME) != 0) ? 6 : 2) < maxSendSize)) {
                 if ((_controlStatus & REQUEST_CLOSE) != 0) {
                     dataFrame[result++] = FINISHING_FRAME | Protocol::CLOSE;
                     _controlStatus &= (~REQUEST_CLOSE);
-                    dataFrame[result++] = 0;
+                    dataFrame[result++] = (_setFlags & MASKING_FRAME);
                 }
                 if (((_controlStatus & REQUEST_PING) != 0) && ((result + 1) < maxSendSize)) {
                     dataFrame[result++] = FINISHING_FRAME | Protocol::PING;
                     _controlStatus &= (~REQUEST_PING);
-                    dataFrame[result++] = 0;
+                    dataFrame[result++] = (_setFlags & MASKING_FRAME);
                 }
                 if (((_controlStatus & REQUEST_PONG) != 0) && ((result + 1) < maxSendSize)) {
                     dataFrame[result++] = FINISHING_FRAME | Protocol::PONG;
                     _controlStatus &= (~REQUEST_PONG);
-                    dataFrame[result++] = 0;
+                    dataFrame[result++] = (_setFlags & MASKING_FRAME);
+                }
+
+                if ((_setFlags & MASKING_FRAME) != 0) {
+                  // Now it seems only control message, hence append with masking keys
+                  uint8_t maskKey[4];
+                  GenerateMaskKey(maskKey);
+                  ::memcpy(&dataFrame[result], &maskKey, 4);
+                  result += 4;
                 }
             }
 
@@ -194,10 +196,10 @@ namespace Web {
                 receivedSize = 0;
             } else {
                 // This seems to be a new frame, check it out !!!
-                uint32_t bytesToMove = (dataFrame[1] & 0x7F);
+                uint64_t bytesToMove = (dataFrame[1] & 0x7F);
 
                 // check if the full header is present..
-                actualHeader = 2 + (bytesToMove == 127 ? 4 : (bytesToMove == 126 ? 2 : 0)) + ((dataFrame[1] & MASKING_FRAME) ? 4 : 0);
+                actualHeader = 2 + (bytesToMove == 127 ? 8 : (bytesToMove == 126 ? 2 : 0)) + ((dataFrame[1] & MASKING_FRAME) ? 4 : 0);
 
                 if (actualHeader > receivedSize) {
                     // Frame too small to identify the content yet !!
@@ -236,17 +238,18 @@ namespace Web {
                         if (bytesToMove == 126) {
                             bytesToMove = ((dataFrame[2] << 8) + dataFrame[3]);
                         } else if (bytesToMove == 127) {
-                            bytesToMove = ((dataFrame[2] << 24) + (dataFrame[3] << 16) + (dataFrame[4] << 8) + dataFrame[5]);
+                            bytesToMove = dataFrame[9];
+                            for (int i=8; i>=2; i--) bytesToMove = (bytesToMove << 8) + dataFrame[i];
                         }
 
                         // We might not have the full body yet...
                         if ((actualHeader + bytesToMove) > receivedSize) {
-                            _pendingReceiveBytes = (actualHeader + bytesToMove - receivedSize);
+                            _pendingReceiveBytes = static_cast<uint32_t>(actualHeader + bytesToMove - receivedSize);
                             bytesToMove = receivedSize - actualHeader;
                             _progressInfo &= (~0x20);
                         }
 
-                        receivedSize = bytesToMove;
+                        receivedSize = static_cast<uint32_t>(bytesToMove);
 
                         // If it is masked, we need to onvert..
                         if ((dataFrame[1] & MASKING_FRAME) != 0) {

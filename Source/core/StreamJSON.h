@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ namespace Core {
             }
             ~SerializerImpl()
             {
+                _sendQueue.Clear();
             }
 
         public:
@@ -149,7 +150,6 @@ namespace Core {
                 return (loaded);
             }
 
-
         private:
             inline uint16_t Deserialize(const Core::ProxyType<Core::JSON::IElement>& source, const uint8_t* stream, const uint16_t length) {
                 return(source->Deserialize(reinterpret_cast<const char*>(stream), length, _offset));
@@ -216,9 +216,7 @@ namespace Core {
         StreamJSONType(const StreamJSONType<SOURCE, ALLOCATOR, INTERFACE>&) = delete;
         StreamJSONType<SOURCE, ALLOCATOR, INTERFACE >& operator=(const StreamJSONType<SOURCE, ALLOCATOR, INTERFACE>&) = delete;
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         template <typename... Args>
         StreamJSONType(uint8_t slotSize, ALLOCATOR& allocator, Args... args)
             : _channel(*this, args...)
@@ -234,12 +232,9 @@ namespace Core {
             , _deserializer(*this, slotSize)
         {
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
-        virtual ~StreamJSONType()
-        {
+        virtual ~StreamJSONType() {
             _channel.Close(Core::infinite);
         }
 

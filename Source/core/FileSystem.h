@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 #define __FILESYSTEM_H
 
 #include "Portability.h"
+#include "Number.h"
 #include "Time.h"
 
 #ifdef __POSIX__
@@ -35,6 +36,21 @@
 
 namespace WPEFramework {
 namespace Core {
+
+    PUSH_WARNING(DISABLE_WARNING_UNUSED_FUNCTIONS)
+
+    static void ParsePathInfo(const string& pathInfo, string& path, uint16_t& permission)
+    {
+        size_t position = pathInfo.find("|");
+        if (position != string::npos) {
+            Core::NumberType<uint16_t> number(pathInfo.substr(position + 1).c_str(), static_cast<uint32_t>(pathInfo.length() - position));
+            permission = number.Value();
+        }
+        path = pathInfo.substr(0, position);
+    }
+
+    POP_WARNING()
+
     class EXTERNAL File {
     public:
 #ifdef __WINDOWS__
@@ -156,6 +172,8 @@ namespace Core {
             return (*this);
         }
 
+        static string Normalize(const string& input, bool& valid);
+
     public:
         inline static string FileName(const string& name)
         {
@@ -179,6 +197,14 @@ namespace Core {
             }
 
             return (result);
+        }
+        inline static bool IsPathAbsolute(const string& path)
+        {
+#ifdef __WINDOWS__
+            return ((path.size() > 0 && (path[0] == '\\' || path[0] == '/')) || (path.size() > 2 && path[1] == ':' && (path[2] == '\\' || path[2] == '/')));
+#else
+            return (path.size() > 0 && path[0] == '/');
+#endif
         }
         inline static string Extension(const string& name)
         {
@@ -335,7 +361,7 @@ namespace Core {
             _handle = open(_name.c_str(), O_RDONLY | O_CLOEXEC);
 #endif
 #ifdef __WINDOWS__
-            _handle = ::CreateFile(_name.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            _handle = ::CreateFile(_name.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, nullptr);
 #endif
             const_cast<File*>(this)->LoadFileInfo();
             return (IsOpen());
@@ -346,7 +372,7 @@ namespace Core {
             _handle = open(_name.c_str(), O_CLOEXEC | (readOnly ? O_RDONLY : O_RDWR));
 #endif
 #ifdef __WINDOWS__
-            _handle = ::CreateFile(_name.c_str(), (readOnly ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE), FILE_SHARE_READ | (readOnly ? 0 : FILE_SHARE_WRITE), nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            _handle = ::CreateFile(_name.c_str(), GENERIC_READ | (readOnly ? 0 : GENERIC_WRITE), FILE_SHARE_READ | (readOnly ? 0 : FILE_SHARE_WRITE), nullptr, OPEN_EXISTING, (readOnly ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL), nullptr);
 #endif
             LoadFileInfo();
             return (IsOpen());
@@ -367,6 +393,21 @@ namespace Core {
             }
 #endif
             return (IsOpen());
+        }
+        bool Unlink()
+        {
+            bool result = true;
+
+            if (Exists() == true) {
+                Close();
+#ifdef __POSIX__
+                result = (unlink(_name.c_str()) == 0);
+#endif
+#ifdef __WINDOWS__
+                result = (::DeleteFile(_name.c_str()) != FALSE);
+#endif
+            }
+            return (result);
         }
         bool Destroy()
         {
@@ -533,11 +574,9 @@ namespace Core {
 #endif
 #ifdef __WINDOWS__
                 Handle fd = DuplicateHandle();
-#pragma warning(disable : 4311)
-#pragma warning(disable : 4302)
-                return ((fd > 0) ? ::_fdopen(reinterpret_cast<int>(fd), (IsReadOnly() ? "r" : "r+")) : nullptr);
-#pragma warning(default : 4311)
-#pragma warning(default : 4302)
+PUSH_WARNING(DISABLE_WARNING_POINTER_TRUNCATION, DISABLE_WARNING_CONVERSION_TRUNCATION)
+                return ((fd != 0) ? ::_fdopen(reinterpret_cast<int>(fd), (IsReadOnly() ? "r" : "r+")) : nullptr);
+POP_WARNING()
 #endif
             } else {
                 return nullptr;
@@ -545,6 +584,10 @@ namespace Core {
         }
 
         void LoadFileInfo();
+
+        uint32_t User(const string& userName) const;
+        uint32_t Group(const string& groupName) const;
+        uint32_t Permission(uint16_t flags) const;
 
     private:
         inline static uint32_t ExtensionOffset(const string& name)
@@ -595,7 +638,22 @@ namespace Core {
         ~Directory();
 
     public:
-        static string Normalize(const string& input);
+        static string Normalize(const string& location)
+        {
+            string result;
+
+            // First see if we are not empy.
+            if (location.empty() == false) {
+
+                bool valid;
+                result = File::Normalize(location, valid);
+
+                if ((valid == true) && ((result.empty() == true) || (result[result.length() - 1] != '/'))) {
+                    result += '/';
+                }
+            }
+            return (result);
+        }
 
         bool Create();
         bool CreatePath();
@@ -605,6 +663,8 @@ namespace Core {
             _name = location;
             return (*this);
         }
+
+        bool Exists() const; 
 
 #ifdef __LINUX__
         bool IsValid() const
@@ -703,44 +763,40 @@ namespace Core {
             return (*this);
         }
 
-        bool Destroy (const bool safePathOnly) {
-
-            bool result = false;
+        bool Destroy () {
 
             // Allow only if the path does not contain ".." entries
-            if ((safePathOnly == false) || (_name.find("..") == string::npos)) {
+            Reset();
 
-                Reset();
+            while (Next() == true) {
+                Core::File file(Current());
 
-                while (Next() == true) {
-                    Core::File file(Current());
+                if (file.IsDirectory() == true) {
+                    string name(file.FileName());
 
-                    if (file.IsDirectory() == true) {
-                        string name(file.FileName());
-
-                        // We can not delete the "." or  ".." entries....
-                        if ( (name.length() > 2) || 
-                             ((name.length() == 1) && (name[0] != '.')) ||
-                             ((name.length() == 2) && !((name[0] == '.') && (name[1] == '.'))) ) {
-                            Directory deleteIt(Current().c_str());
-                            deleteIt.Destroy(false);
-                            file.Destroy();
-                        }
-                    } else {
+                    // We can not delete the "." or  ".." entries....
+                    if ( (name.length() > 2) || 
+                            ((name.length() == 1) && (name[0] != '.')) ||
+                            ((name.length() == 2) && !((name[0] == '.') && (name[1] == '.'))) ) {
+                        Directory deleteIt(Current().c_str());
+                        deleteIt.Destroy();
                         file.Destroy();
                     }
+                } else {
+                    file.Destroy();
                 }
-
-                if (_name.back() != '/') {
-                    Core::File(_name).Destroy();
-                }
-
-                result = true;
             }
 
-            return (result);
+            if (_name.back() != '/') {
+                Core::File(_name).Destroy();
+            }
+
+            return (true);
         }
 
+        uint32_t User(const string& userName) const;
+        uint32_t Group(const string& groupName) const;
+        uint32_t Permission(uint16_t flags) const;
 
     private:
         string _name;

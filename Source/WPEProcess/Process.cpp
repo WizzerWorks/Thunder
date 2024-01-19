@@ -10,10 +10,11 @@
 MODULE_NAME_DECLARATION(BUILD_REFERENCE)
 
 namespace WPEFramework {
+    static string _background = _T("false");
 
 namespace Process {
 
-    class WorkerPoolImplementation : public Core::IIPCServer, public Core::WorkerPool {
+    class WorkerPoolImplementation : public Core::IIPCServer, public Core::WorkerPool, public Core::ThreadPool::ICallback {
     private:
         class Dispatcher : public Core::ThreadPool::IDispatcher {
         public:
@@ -58,24 +59,19 @@ namespace Process {
             Sink(const Sink&) = delete;
             Sink& operator= (const Sink&) = delete;
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
             Sink(WorkerPoolImplementation& parent) 
                 : _parent(parent)
                 , _job(*this) 
             {
             }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
             ~Sink() override
             {
             }
 
         public:
             void Dispatch() {
-                Core::ServiceAdministrator::Instance().FlushLibraries();
 
                 uint32_t instances = Core::ServiceAdministrator::Instance().Instances();
 
@@ -92,7 +88,7 @@ namespace Process {
                 }
             }
             void Destructed() override {
-                Core::ProxyType<Core::IDispatch> job(_job.Aquire());
+                Core::ProxyType<Core::IDispatch> job(_job.Submit());
 
                 if (job.IsValid() == true) {
                     _parent.Submit(job);
@@ -109,13 +105,10 @@ namespace Process {
         WorkerPoolImplementation(const WorkerPoolImplementation&) = delete;
         WorkerPoolImplementation& operator=(const WorkerPoolImplementation&) = delete;
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         WorkerPoolImplementation(const uint8_t threads, const uint32_t stackSize, const uint32_t queueSize, const string& callsign)
-            : WorkerPool(threads - 1, stackSize, queueSize, &_dispatcher)
+            : WorkerPool(threads - 1, stackSize, queueSize, &_dispatcher, this)
             , _dispatcher(callsign)
-            , _announceHandler(nullptr)
             , _sink(*this)
         {
             Core::ServiceAdministrator::Instance().Callback(&_sink);
@@ -124,9 +117,7 @@ namespace Process {
                 SYSLOG(Logging::Notification, ("Spawned: %d additional minions.", threads - 1));
             }
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
         ~WorkerPoolImplementation()
         {
@@ -134,11 +125,6 @@ namespace Process {
 
             // Disable the queue so the minions can stop, even if they are processing and waiting for work..
             Core::WorkerPool::Stop();
-        }
-        void Announcements(Core::IIPCServer* announces)
-        {
-            ASSERT((announces != nullptr) ^ (_announceHandler != nullptr));
-            _announceHandler = announces;
         }
         void Run()
         {
@@ -148,29 +134,31 @@ namespace Process {
         }
         void Stop()
         {
-            Core::WorkerPool::Shutdown();
+            Core::WorkerPool::Stop();
         }
-
+        void Idle() {
+            // If we handled all pending requests, it is safe to "unload"
+            Core::ServiceAdministrator::Instance().FlushLibraries();
+        }
 
     protected:
         void Procedure(Core::IPCChannel& channel, Core::ProxyType<Core::IIPC>& data) override
         {
             Core::ProxyType<RPC::Job> job(RPC::Job::Instance());
 
-            job->Set(channel, data, _announceHandler);
+            job->Set(channel, data);
 
             WorkerPool::Submit(Core::ProxyType<Core::IDispatch>(job));
         }
     private:
         Dispatcher _dispatcher;
-        Core::IIPCServer* _announceHandler;
         Sink _sink;
     };
 
     class ConsoleOptions : public Core::Options {
     public:
         ConsoleOptions(int argumentCount, TCHAR* arguments[])
-            : Core::Options(argumentCount, arguments, _T("h:l:c:C:r:p:s:d:a:m:i:u:g:t:e:x:V:v:P:"))
+            : Core::Options(argumentCount, arguments, _T("h:l:c:C:r:p:s:d:a:m:i:u:g:t:e:x:V:v:P:S:"))
             , Locator(nullptr)
             , ClassName(nullptr)
             , Callsign(nullptr)
@@ -185,10 +173,10 @@ namespace Process {
             , AppPath()
             , ProxyStubPath()
             , PostMortemPath()
+            , SystemRootPath()
             , User(nullptr)
             , Group(nullptr)
             , Threads(1)
-            , EnabledLoggings(0)
         {
             Parse();
         }
@@ -211,10 +199,10 @@ namespace Process {
         string AppPath;
         string ProxyStubPath;
         string PostMortemPath;
+        string SystemRootPath;
         const TCHAR* User;
         const TCHAR* Group;
         uint8_t Threads;
-        uint32_t EnabledLoggings;
 
     private:
         string Strip(const TCHAR text[]) const
@@ -256,6 +244,9 @@ namespace Process {
             case 'P':
                 PostMortemPath = Strip(argument);
                 break;
+            case 'S':
+                SystemRootPath = Strip(argument);
+                break;
             case 'v':
                 VolatilePath = Strip(argument);
                 break;
@@ -273,9 +264,6 @@ namespace Process {
                 break;
             case 'i':
                 InterfaceId = Core::NumberType<uint32_t>(Core::TextFragment(argument)).Value();
-                break;
-            case 'e':
-                EnabledLoggings = Core::NumberType<uint32_t>(Core::TextFragment(argument)).Value();
                 break;
             case 'V':
                 Version = Core::NumberType<uint32_t>(Core::TextFragment(argument)).Value();
@@ -319,23 +307,27 @@ namespace Process {
         return (result);
     }
 
-    static void* AquireInterfaces(ConsoleOptions& options)
+    static void* AcquireInterfaces(ConsoleOptions& options)
     {
         void* result = nullptr;
 
         if ((options.Locator != nullptr) && (options.ClassName != nullptr)) {
-            result = CheckInstance(options.PersistentPath, options.Locator, options.ClassName, options.InterfaceId, options.Version);
+            string path = (!options.SystemRootPath.empty() ? options.SystemRootPath : "") + options.PersistentPath;
+            result = CheckInstance(path, options.Locator, options.ClassName, options.InterfaceId, options.Version);
 
             if (result == nullptr) {
-                result = CheckInstance(options.SystemPath, options.Locator, options.ClassName, options.InterfaceId, options.Version);
+                path = (!options.SystemRootPath.empty() ? options.SystemRootPath : "") + options.SystemPath;
+                result = CheckInstance(path, options.Locator, options.ClassName, options.InterfaceId, options.Version);
 
                 if (result == nullptr) {
-                    result = CheckInstance(options.DataPath, options.Locator, options.ClassName, options.InterfaceId, options.Version);
+                    path = (!options.SystemRootPath.empty() ? options.SystemRootPath : "") + options.DataPath;
+                    result = CheckInstance(path, options.Locator, options.ClassName, options.InterfaceId, options.Version);
 
                     if (result == nullptr) {
                         string searchPath(options.AppPath.empty() == false ? Core::Directory::Normalize(options.AppPath) : string());
 
-                        result = CheckInstance((searchPath + _T("Plugins/")), options.Locator, options.ClassName, options.InterfaceId, options.Version);
+                        path = (!options.SystemRootPath.empty() ? options.SystemRootPath : "") + searchPath;
+                        result = CheckInstance((path + _T("Plugins/")), options.Locator, options.ClassName, options.InterfaceId, options.Version);
                     }
                 }
             }
@@ -375,7 +367,7 @@ private:
         {
             return (_fileBodyFactory.Element());
         }
-        Core::ProxyType<Web::JSONBodyType<Core::JSONRPC::Message>> JSONRPC() override
+        Core::ProxyType<Web::JSONRPC::Body> JSONRPC() override
         {
             return (_jsonRPCFactory.Element());
         }
@@ -384,7 +376,7 @@ private:
         Core::ProxyPoolType<Web::Request> _requestFactory;
         Core::ProxyPoolType<Web::Response> _responseFactory;
         Core::ProxyPoolType<Web::FileBody> _fileBodyFactory;
-        Core::ProxyPoolType<Web::JSONBodyType<Core::JSONRPC::Message>> _jsonRPCFactory;
+        Core::ProxyPoolType<Web::JSONRPC::Body> _jsonRPCFactory;
     };
 
     static void UncaughtExceptions () {
@@ -440,13 +432,13 @@ public:
             _server.Release();
         }
 
-        if (_engine.IsValid() == true) {
-            _engine.Release();
-        }
-
         // We are going to tear down the stugg. Unregistere the Worker Pool
         Core::IWorkerPool::Assign(nullptr);
         PluginHost::IFactories::Assign(nullptr);
+
+        if (_engine.IsValid() == true) {
+            _engine.Release();
+        }
 
         Core::Singleton::Dispose();
         std::set_terminate(nullptr);
@@ -476,7 +468,6 @@ public:
         PluginHost::IFactories::Assign(&_factories);
 
         _server = (Core::ProxyType<RPC::CommunicatorClient>::Create(remoteNode, Core::ProxyType<Core::IIPCServer>(_engine)));
-        _engine->Announcements(_server->Announcement());
     }
     void Run(const string& pathName, const uint32_t interfaceId, void* base, const uint32_t sequenceId)
     {
@@ -557,6 +548,10 @@ int main(int argc, char** argv)
 
     Process::ConsoleOptions options(argc, argv);
 
+    if ((Core::SystemInfo::GetEnvironment(_T("THUNDER_BACKGROUND"), _background) == true) && (_background == "true")) {
+        ::setvbuf(stdout, NULL, _IONBF, 0);
+    }
+
     if ((options.RequestUsage() == true) || (options.Locator == nullptr) || (options.ClassName == nullptr) || (options.RemoteChannel == nullptr) || (options.Exchange == 0)) {
         printf("Process [-h] \n");
         printf("         -l <locator>\n");
@@ -575,8 +570,8 @@ int main(int argc, char** argv)
         printf("        [-v <volatile path>]\n");
         printf("        [-a <app path>]\n");
         printf("        [-m <proxy stub library path>]\n");
-        printf("        [-e <enabled SYSLOG categories>]\n");
         printf("        [-P <post mortem path>]\n\n");
+        printf("        [-S <system root path>]\n\n");
         printf("This application spawns a seperate process space for a plugin. The plugins");
         printf("are searched in the same order as they are done in process. Starting from:\n");
         printf(" 1) <persistent path>/<locator>\n");
@@ -615,30 +610,23 @@ int main(int argc, char** argv)
             NULL, true, -1);
         #endif
 
+        // Any remote connection that will be spawned from here, will have this ExchangeId as its parent ID.
+        string parentInfo(Core::NumberType<uint32_t>(options.Exchange).Text());
+
+        if (callsign.empty() == false) {
+            parentInfo += ("," + callsign);
+        }
+
+        Core::SystemInfo::SetEnvironment(_T("COM_PARENT_INFO"), parentInfo);
+
         Process::ProcessFlow process;
 
         Core::NodeId remoteNode(options.RemoteChannel);
 
-        // Any remote connection that will be spawned from here, will have this ExchangeId as its parent ID.
-        Core::SystemInfo::SetEnvironment(_T("COM_PARENT_EXCHANGE_ID"), Core::NumberType<uint32_t>(options.Exchange).Text());
+        TRACE_L1("Opening a message file with ID: [%d].", options.Exchange);
 
-        TRACE_L1("Opening a trace file with ID: [%d].", options.Exchange);
-
-        // Due to the LXC container support all ID's get mapped. For the TraceBuffer, use the host given ID.
-        Trace::TraceUnit::Instance().Open(options.Exchange);
-
-        // Time to open up the LOG tracings as specified by the caller.
-        Logging::LoggingType<Logging::Startup>::Enable((options.EnabledLoggings & 0x00000001) != 0);
-        Logging::LoggingType<Logging::Shutdown>::Enable((options.EnabledLoggings & 0x00000002) != 0);
-        Logging::LoggingType<Logging::Notification>::Enable((options.EnabledLoggings & 0x00000004) != 0);
-        Logging::LoggingType<Logging::Crash>::Enable((options.EnabledLoggings & 0x00000008) != 0);
-        Logging::LoggingType<Logging::ParsingError>::Enable((options.EnabledLoggings & 0x00000010) != 0);
-        Logging::LoggingType<Logging::Error>::Enable((options.EnabledLoggings & 0x00000020) != 0);
-        Logging::LoggingType<Logging::Fatal>::Enable((options.EnabledLoggings & 0x00000040) != 0);
-
-#ifdef __CORE_WARNING_REPORTING__
-        WarningReporting::WarningReportingUnit::Instance().Open(options.Exchange);
-#endif
+        // Due to the LXC container support all ID's get mapped. For the MessageBuffer, use the host given ID.
+        Messaging::MessageUnit::Instance().Open(options.Exchange);
 
         if (remoteNode.IsValid()) {
             void* base = nullptr;
@@ -649,6 +637,7 @@ int main(int argc, char** argv)
             if (options.Group != nullptr) {
                 Core::ProcessCurrent().Group(string(options.Group));
             }
+
             if (options.User != nullptr) {
                 Core::ProcessCurrent().User(string(options.User));
             }
@@ -656,12 +645,15 @@ int main(int argc, char** argv)
             process.Startup(options.Threads, remoteNode, callsign);
 
             // Register an interface to handle incoming requests for interfaces.
-            if ((base = Process::AquireInterfaces(options)) != nullptr) {
+            if ((base = Process::AcquireInterfaces(options)) != nullptr) {
 
                 TRACE_L1("Allright time to start running");
                 process.Run(options.ProxyStubPath, options.InterfaceId, base, options.Exchange);
             }
         }
+
+        //close messaging unit before singletons are cleared
+        Messaging::MessageUnit::Instance().Close();
     }
 
     TRACE_L1("End of Process!!!!");

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,8 +43,8 @@ namespace Core {
         // What is the use of a file that is not readable nor writable ?
         ASSERT(m_Flags != 0);
 
-        // The file needs to be prepared in the same way as we request the Memoerymapped file...
-        ASSERT(m_File.IsOpen() == false);
+        // The file needs to be prepared in the same way as we request the Memorymapped file...
+        ASSERT(m_File.IsOpen() == true);
 
         if (IsValid()) {
             OpenMemoryMappedFile(static_cast<uint32_t>(m_File.Size()));
@@ -62,6 +62,7 @@ namespace Core {
 
         if ((type & File::CREATE) != 0) {
             m_File.Create(type);
+            m_File.Permission(type & 0xFFFF);
         } else {
             m_File.Open((type & File::USER_WRITE) == 0);
         }
@@ -74,6 +75,13 @@ namespace Core {
                 OpenMemoryMappedFile(static_cast<uint32_t>(m_File.Size()));
             }
         }
+    }
+
+    DataElementFile::DataElementFile(const DataElementFile& copy)
+        : DataElement(copy)
+        , m_File(copy.m_File)
+        , m_MemoryMappedFile(copy.m_MemoryMappedFile)
+        , m_Flags(copy.m_Flags) {
     }
 
     bool DataElementFile::Load() {
@@ -114,12 +122,12 @@ namespace Core {
         }
     }
 
-    /* virtual */ DataElementFile::~DataElementFile()
+    void DataElementFile::Close()
     {
         if ((IsValid()) && (m_MemoryMappedFile != INVALID_HANDLE_VALUE)) {
             DWORD flags = ((m_Flags & File::USER_READ) != 0 ? FILE_MAP_READ : 0) | ((m_Flags & File::USER_WRITE) != 0 ? FILE_MAP_WRITE : 0);
             // Set the last size...
-            ::MapViewOfFile(m_MemoryMappedFile, flags, 0, 0, static_cast<SIZE_T>(AllocatedSize()));
+            ::UnmapViewOfFile(Buffer());
             ::CloseHandle(m_MemoryMappedFile);
 
             m_MemoryMappedFile = INVALID_HANDLE_VALUE;
@@ -212,7 +220,7 @@ namespace Core {
         OpenMemoryMappedFile(m_File.Size());
     }
 
-    /* virtual */ DataElementFile::~DataElementFile()
+    void DataElementFile::Close()
     {
         if ((IsValid()) && (m_MemoryMappedFile != INVALID_HANDLE_VALUE)) {
 

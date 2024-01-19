@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@
 #include "TextFragment.h"
 #include "Trace.h"
 #include "Proxy.h"
+#include "SystemInfo.h"
 
 #include "WarningReportingControl.h"
 #include "WarningReportingCategories.h"
@@ -36,36 +37,35 @@
 namespace WPEFramework {
 namespace Core {
 
-    struct EXTERNAL IServiceMetadata {
-        virtual ~IServiceMetadata(){};
-
-        virtual const std::string& Name() const = 0;
-        virtual const TCHAR* Module() const = 0;
-        virtual uint32_t Version() const = 0;
-        virtual void* Create(const Library& library, const uint32_t interfaceNumber) = 0;
-    };
-
     class EXTERNAL ServiceAdministrator {
     private:
         ServiceAdministrator();
-        ServiceAdministrator(const ServiceAdministrator&) = delete;
-        ServiceAdministrator& operator=(const ServiceAdministrator&) = delete;
+
+        using Services = std::vector<IService*>;
 
     public:
         struct EXTERNAL ICallback {
-            virtual ~ICallback(){};
+            virtual ~ICallback() = default;
 
             virtual void Destructed() = 0;
         };
 
     public:
+        ServiceAdministrator(ServiceAdministrator&&) = delete;
+        ServiceAdministrator(const ServiceAdministrator&) = delete;
+        ServiceAdministrator& operator=(ServiceAdministrator&&) = delete;
+        ServiceAdministrator& operator=(const ServiceAdministrator&) = delete;
         virtual ~ServiceAdministrator();
 
         static ServiceAdministrator& Instance();
 
     public:
+        Library LoadLibrary(const TCHAR libraryName[]) {
+            Core::SafeSyncType<Core::CriticalSection> lock(_adminLock);
+            return (Library(libraryName));
+        }
         // There is *NO* locking around the _callback pointer. SO this callback 
-        // must be set, before any Service Object is created ore released!!!
+        // must be set, before any Service Object is created or released!!!
         void Callback(ICallback* callback)
         {
             ASSERT((callback == nullptr) ^ (_callback == nullptr));
@@ -92,9 +92,9 @@ namespace Core {
             return (_instanceCount);
         }
         void FlushLibraries();
-        void ReleaseLibrary(Library& reference);
-        void Register(IServiceMetadata* service);
-        void Unregister(IServiceMetadata* service);
+        void ReleaseLibrary(Library&& reference);
+        void Announce(IService* service);
+        void Revoke(IService* service);
         void* Instantiate(const Library& library, const char name[], const uint32_t version, const uint32_t interfaceNumber);
 
         template <typename REQUESTEDINTERFACE>
@@ -111,74 +111,28 @@ namespace Core {
 
     private:
         Core::CriticalSection _adminLock;
-        std::list<IServiceMetadata*> _services;
+        Services _services;
         mutable uint32_t _instanceCount;
         ICallback* _callback;
         std::list<Library> _unreferencedLibraries;
         static ServiceAdministrator _systemServiceAdministrator;
     };
 
-    template <typename ACTUALSERVICE>
-    class Service : public ProxyService<ACTUALSERVICE> {
-    private:
-        Service(const Service<ACTUALSERVICE>&) = delete;
-        Service<ACTUALSERVICE> operator=(const Service<ACTUALSERVICE>&) = delete;
-
-    protected:
-        template<typename... Args>
-        Service(Args&&... args)
-            : ProxyService<ACTUALSERVICE>(std::forward<Args>(args)...)
-        {
-            ServiceAdministrator::Instance().AddRef();
-        }
-
-    public:
-        template <typename INTERFACE, typename... Args>
-        static INTERFACE* Create(Args&&... args)
-        {
-            ACTUALSERVICE* object = new (0) Service<ACTUALSERVICE>(std::forward<Args>(args)...);
-
-            return (Extract<INTERFACE>(object, TemplateIntToType<std::is_same<ACTUALSERVICE, INTERFACE>::value>()));
-        }
-        virtual ~Service()
-        {
-            ServiceAdministrator::Instance().Release();
-        }
-
-    private:
-        template <typename INTERFACE>
-        inline static INTERFACE* Extract(ACTUALSERVICE* object, const TemplateIntToType<false>&)
-        {
-            INTERFACE* result = reinterpret_cast<INTERFACE*>(object->QueryInterface(INTERFACE::ID));
-
-            if (result == nullptr) {
-                delete object;
-            }
-
-            return (result);
-        }
-        template <typename INTERFACE>
-        inline static INTERFACE* Extract(ACTUALSERVICE* object, const TemplateIntToType<true>&)
-        {
-            object->AddRef();
-            return (object);
-        }
-    };
-
     template <typename ACTUALSINK>
-    class Sink : public ACTUALSINK {
+    class SinkType : public ACTUALSINK {
     private:
-        Sink(const Sink<ACTUALSINK>&) = delete;
-        Sink<ACTUALSINK> operator=(const Sink<ACTUALSINK>&) = delete;
+        SinkType(SinkType<ACTUALSINK>&&) = delete;
+        SinkType(const SinkType<ACTUALSINK>&) = delete;
+        SinkType<ACTUALSINK> operator=(const SinkType<ACTUALSINK>&) = delete;
 
     public:
         template <typename... Args>
-        Sink(Args&&... args)
+        SinkType(Args&&... args)
             : ACTUALSINK(std::forward<Args>(args)...)
             , _referenceCount(0)
         {
         }
-        ~Sink()
+        ~SinkType()
         {
             REPORT_OUTOFBOUNDS_WARNING(WarningReporting::SinkStillHasReference, _referenceCount);
 
@@ -204,84 +158,185 @@ namespace Core {
         mutable uint32_t _referenceCount;
     };
 
-    // Baseclass to turn objects into services
-    template <typename ACTUALSERVICE, const TCHAR** MODULENAME>
-    class ServiceMetadata : public IServiceMetadata {
+    template <typename ACTUALSERVICE>
+    class ServiceType : public ACTUALSERVICE {
+    protected:
+        template<typename... Args>
+        ServiceType(Args&&... args)
+            : ACTUALSERVICE(std::forward<Args>(args)...)
+        {
+            ServiceAdministrator::Instance().AddRef();
+        }
+
+    public:
+        ServiceType(ServiceType<ACTUALSERVICE>&&) = delete;
+        ServiceType(const ServiceType<ACTUALSERVICE>&) = delete;
+        ServiceType<ACTUALSERVICE>& operator=(ServiceType<ACTUALSERVICE>&&) = delete;
+        ServiceType<ACTUALSERVICE>& operator=(const ServiceType<ACTUALSERVICE>&) = delete;
+
+        template <typename INTERFACE, typename... Args>
+        static INTERFACE* Create(Args&&... args)
+        {
+            Core::ProxyType< ServiceType<ACTUALSERVICE> > object = Core::ProxyType< ServiceType<ACTUALSERVICE> >::Create(std::forward<Args>(args)...);
+
+            return (Extract<INTERFACE>(object, TemplateIntToType<std::is_same<ACTUALSERVICE, INTERFACE>::value>()));
+        }
+        ~ServiceType() override
+        {
+            ServiceAdministrator::Instance().Release();
+        }
+
     private:
-        ServiceMetadata() = delete;
-        ServiceMetadata(const ServiceMetadata&) = delete;
-        ServiceMetadata& operator=(const ServiceMetadata&) = delete;
+        template <typename INTERFACE>
+        inline static INTERFACE* Extract(const Core::ProxyType< ServiceType<ACTUALSERVICE > >& object, const TemplateIntToType<false>&)
+        {
+            INTERFACE* result = reinterpret_cast<INTERFACE*>(object->QueryInterface(INTERFACE::ID));
+
+            return (result);
+        }
+        template <typename INTERFACE>
+        inline static INTERFACE* Extract(const Core::ProxyType< ServiceType<ACTUALSERVICE> >& object, const TemplateIntToType<true>&)
+        {
+            object->AddRef();
+            return (object.operator->());
+        }
+    };
+
+    template <typename TYPE>
+    using Sink = SinkType<TYPE>;
+
+    template <typename TYPE>
+    using Service = ServiceType<TYPE>;
+
+    typedef DEPRECATED IService::IMetadata IServiceMetadata;
+
+    template <typename ACTUALSERVICE>
+    class PublishedServiceType : public IService {
+    private:
+        template <typename SERVICE>
+        class Implementation : public ServiceType<SERVICE> {
+        public:
+            Implementation() = delete;
+            Implementation(Implementation<SERVICE>&&) = delete;
+            Implementation(const Implementation<SERVICE>&) = delete;
+            Implementation<SERVICE>& operator=(Implementation<SERVICE>&&) = delete;
+            Implementation<SERVICE>& operator=(const Implementation<SERVICE>&) = delete;
+
+            explicit Implementation(const Library& library)
+                : ServiceType<SERVICE>()
+                , _referenceLib(library) {
+            }
+            ~Implementation() override {
+                // We can not use the default destructor here a that 
+                // requires a destructor on the union member, but we 
+                // do not want a union destructor, so lets create our
+                // own!!!!
+            }
+
+        protected:
+            // Destructed is a method called through SFINAE just before the memory 
+            // associated with the object is freed from a Core::ProxyObject. If this
+            // method is called, be aware that the destructor of the object has run
+            // to completion!!!
+            void Destructed() {
+                ServiceAdministrator::Instance().ReleaseLibrary(std::move(_referenceLib));
+            }
+
+        private:
+            // The union here is used to avoid the destruction of the _referenceLib during
+            // the destructor call. That is required to make sure that the whole object,
+            // the actual service, is first fully destructed before we offer it to the
+            // service destructor (done in the Destructed call). This avoids the unloading
+            // of the referenced library before the object (part of this library) is fully 
+            // destructed...
+            union { Library _referenceLib; };
+        };
 
         template <typename SERVICE>
-        class ServiceImplementation : public Service<SERVICE> {
-        private:
-            ServiceImplementation() = delete;
-            ServiceImplementation(const ServiceImplementation<SERVICE>&) = delete;
-            ServiceImplementation<SERVICE> operator=(const ServiceImplementation<SERVICE>&) = delete;
+        class Info : public IService::IMetadata {
+        public:
+            Info() = delete;
+            Info(Info<SERVICE>&&) = delete;
+            Info(const Info<SERVICE>&) = delete;
+            Info<SERVICE>& operator=(Info<SERVICE>&&) = delete;
+            Info<SERVICE>& operator=(const Info<SERVICE>&) = delete;
+
+            Info(const TCHAR* moduleName, const uint8_t major, const uint8_t minor, const uint8_t patch)
+                : _version((major << 16) | (minor << 8) | patch)
+                , _Id(Core::ClassNameOnly(typeid(SERVICE).name()).Text())
+                , _moduleName(moduleName) {
+            }
+            ~Info() override = default;
 
         public:
-            explicit ServiceImplementation(const Library& library)
-                : Service<SERVICE>()
-                , _referenceLib(library)
-            {
+            uint8_t Major() const override {
+                return (static_cast<uint8_t>((_version >> 16) & 0xFF));
             }
-            ~ServiceImplementation()
+            uint8_t Minor() const override {
+                return (static_cast<uint8_t>((_version >> 8) & 0xFF));
+            }
+            uint8_t Patch() const override {
+                return (static_cast<uint8_t>(_version & 0xFF));
+            }
+            const TCHAR* ServiceName() const override
             {
-                ServiceAdministrator::Instance().ReleaseLibrary(_referenceLib);
+                return (_Id.c_str());
+            }
+            const TCHAR* Module() const override
+            {
+                return (_moduleName);
             }
 
         private:
-            Library _referenceLib;
+            uint32_t _version;
+            string _Id;
+            const TCHAR* _moduleName;
         };
 
     public:
-        ServiceMetadata(const uint16_t major, uint16_t minor)
-            : _version(((major & 0xFFFF) << 16) + minor)
-            , _Id(Core::ClassNameOnly(typeid(ACTUALSERVICE).name()).Text())
-        {
-            Core::ServiceAdministrator::Instance().Register(this);
+        PublishedServiceType() = delete;
+        PublishedServiceType(PublishedServiceType&&) = delete;
+        PublishedServiceType(const PublishedServiceType&) = delete;
+        PublishedServiceType& operator=(PublishedServiceType&&) = delete;
+        PublishedServiceType& operator=(const PublishedServiceType&) = delete;
+
+        PublishedServiceType(const TCHAR* moduleName, const uint8_t major, const uint8_t minor, const uint8_t patch)
+            : _info(moduleName, major, minor, patch) {
+            Core::ServiceAdministrator::Instance().Announce(this);
         }
-        ~ServiceMetadata()
-        {
-            Core::ServiceAdministrator::Instance().Unregister(this);
+        ~PublishedServiceType() {
+            Core::ServiceAdministrator::Instance().Revoke(this);
         }
 
     public:
-        virtual uint32_t Version() const
-        {
-            return (_version);
-        }
-        virtual const std::string& Name() const
-        {
-            return (_Id);
-        }
-        virtual const TCHAR* Module() const
-        {
-            return (*MODULENAME);
-        }
-        virtual void* Create(const Library& library, const uint32_t interfaceNumber)
-        {
+        void* Create(const Library& library, const uint32_t interfaceNumber) override {
             void* result = nullptr;
-            IUnknown* object = new (0) ProxyService< ServiceImplementation<ACTUALSERVICE> >(library);
+            Core::ProxyType< Implementation<ACTUALSERVICE> > object = Core::ProxyType< Implementation<ACTUALSERVICE> >::Create(library);
 
-            if (object != nullptr) {
-                // This quety interface will increment the refcount of the Service at least to 1.
+            if (object.IsValid() == true) {
+                // This query interface will increment the refcount of the Service at least to 1.
                 result = object->QueryInterface(interfaceNumber);
-
-                if (result == nullptr) {
-                    delete object;
-                }
             }
             return (result);
         }
+        const IMetadata* Metadata() const override {
+            return (&_info);
+        }
 
     private:
-        uint32_t _version;
-        string _Id;
+        Info<ACTUALSERVICE> _info;
     };
 
-#define SERVICE_REGISTRATION(ACTUALCLASS, MAJOR, MINOR) \
-    static WPEFramework::Core::ServiceMetadata<ACTUALCLASS, &WPEFramework::Core::System::MODULE_NAME> ServiceMetadata_##ACTUALCLASS(MAJOR, MINOR);
+
+#define SERVICE_REGISTRATION_NAME(N, ...) CONCAT_STRINGS(SERVICE_REGISTRATION_, N)(__VA_ARGS__)
+#define SERVICE_REGISTRATION(...) SERVICE_REGISTRATION_NAME(PUSH_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+
+#define SERVICE_REGISTRATION_3(ACTUALCLASS, MAJOR, MINOR) \
+static WPEFramework::Core::PublishedServiceType<ACTUALCLASS> ServiceMetadata_##ACTUALCLASS(WPEFramework::Core::System::MODULE_NAME, MAJOR, MINOR, 0);
+
+#define SERVICE_REGISTRATION_4(ACTUALCLASS, MAJOR, MINOR, PATCH) \
+static WPEFramework::Core::PublishedServiceType<ACTUALCLASS> ServiceMetadata_##ACTUALCLASS(WPEFramework::Core::System::MODULE_NAME, MAJOR, MINOR, PATCH);
+
 
 #ifdef BEGIN_INTERFACE_MAP
 #undef BEGIN_INTERFACE_MAP

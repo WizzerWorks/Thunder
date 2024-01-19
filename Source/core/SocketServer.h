@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -97,7 +97,7 @@ namespace Core {
             }
             inline uint32_t Count() const
             {
-                return (_clients->size());
+                return (_clients.size());
             }
             HANDLECLIENT Client()
             {
@@ -146,8 +146,8 @@ namespace Core {
             }
             ~SocketHandler()
             {
-                Close(Core::infinite);
-                CloseClients();
+                SocketListner::Close(Core::infinite);
+                CloseClients(0);
 
                 _lock.Lock();
 
@@ -225,20 +225,7 @@ namespace Core {
 
                 return (result);
             }
-            inline void Suspend(const uint32_t ID)
-            {
-                _lock.Lock();
-
-                typename ClientMap::iterator index = _clients.find(ID);
-
-                if (index != _clients.end()) {
-                    // Oke connection still exists, send the message..
-                    index->second->Close(0);
-                }
-
-                _lock.Unlock();
-            }
-            inline void CloseClients()
+            inline void CloseClients(const uint32_t waiTime)
             {
                 _lock.Lock();
 
@@ -246,7 +233,7 @@ namespace Core {
 
                 while (index != _clients.end()) {
                     // Oke connection still exists, send the message..
-                    index->second->Close(0);
+                    index->second->Close(waiTime);
                     ++index;
                 }
 
@@ -263,7 +250,8 @@ namespace Core {
                     if ((index->second->IsClosed() == true) || ((index->second->IsSuspended() == true) && (index->second->Close(100) == Core::ERROR_NONE))) {
                         // Step forward but remember where we were and delete that one....
                         index = _clients.erase(index);
-                    } else {
+                    }
+                    else {
                         index++;
                     }
                 }
@@ -272,7 +260,6 @@ namespace Core {
             }
             virtual void Accept(SOCKET& newClient, const NodeId& remoteId)
             {
-
                 ProxyType<HANDLECLIENT> client = ProxyType<HANDLECLIENT>::Create(newClient, remoteId, &_parent);
 
                 ASSERT(client.IsValid() == true);
@@ -282,8 +269,20 @@ namespace Core {
 
                     _lock.Lock();
 
+                    // Check if we can remove closed clients.
+                    typename ClientMap::iterator index = _clients.begin();
+
+                    while (index != _clients.end()) {
+                        if (index->second->IsClosed() == true) {
+                            index = _clients.erase(index);
+                        }
+                        else {
+                            ++index;
+                        }
+                    }
+
                     // If the CLient has a method to receive it's Id pass it on..
-                    __Id<HANDLECLIENT>(*client, _nextClient);
+                    __Id(*client, _nextClient);
 
                     // A new connection is available, open up a new client
                     _clients.insert(std::pair<uint32_t, ProxyType<HANDLECLIENT>>(_nextClient++, client));
@@ -304,19 +303,17 @@ namespace Core {
             // -----------------------------------------------------
             // Check for Id  method on Object
             // -----------------------------------------------------
-            HAS_MEMBER(Id, hasId);
+            IS_MEMBER_AVAILABLE(Id, hasId);
 
-            typedef hasId<HANDLECLIENT, void (HANDLECLIENT::*)(uint32_t)> TraitId;
-
-            template <typename SUBJECT>
-            inline typename Core::TypeTraits::enable_if<SocketHandler<SUBJECT>::TraitId::value, void>::type
+            template <typename SUBJECT=HANDLECLIENT>
+            inline typename Core::TypeTraits::enable_if<hasId<SUBJECT, void, uint32_t>::value, void>::type
             __Id(HANDLECLIENT& object, const uint32_t id)
             {
                 object.Id(id);
             }
 
-            template <typename SUBJECT>
-            inline typename Core::TypeTraits::enable_if<!SocketHandler<SUBJECT>::TraitId::value, void>::type
+            template <typename SUBJECT=HANDLECLIENT>
+            inline typename Core::TypeTraits::enable_if<!hasId<SUBJECT, void, uint32_t>::value, void>::type
             __Id(HANDLECLIENT&, const uint32_t)
             {
             }
@@ -332,9 +329,7 @@ namespace Core {
         SocketServerType<CLIENT>& operator=(const SocketServerType<CLIENT>&) = delete;
 
     public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         SocketServerType()
             : _handler(this)
         {
@@ -343,9 +338,7 @@ namespace Core {
             : _handler(listeningNode, this)
         {
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
         ~SocketServerType()
         {
         }
@@ -358,7 +351,7 @@ namespace Core {
         inline uint32_t Close(const uint32_t waitTime)
         {
             uint32_t result = _handler.Close(waitTime);
-            _handler.CloseClients();
+            _handler.CloseClients(waitTime);
             return (result);
         }
         inline void Cleanup()

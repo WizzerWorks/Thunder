@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -302,9 +302,7 @@ namespace Plugin {
         typedef Core::IteratorType<const std::list<Instance>, const Instance&, std::list<Instance>::const_iterator> Iterator;
 
     public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         Probe(const Core::NodeId& source, const PluginHost::IShell* service, const uint8_t timeToLive, const string& model)
             : _adminLock()
             , _partners()
@@ -315,9 +313,7 @@ namespace Plugin {
 
             ASSERT(timeToLive != 0);
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
         ~Probe()
         {
         }

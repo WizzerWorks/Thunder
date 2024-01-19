@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
 namespace WPEFramework {
 namespace Core {
     struct IMedia {
-        virtual ~IMedia() {}
+        virtual ~IMedia() = default;
 
         virtual string RemoteId() const = 0;
         virtual uint32_t Open(const uint32_t waitTime) = 0;
@@ -119,9 +119,7 @@ namespace Core {
         Media<SOURCE> operator=(const Media<SOURCE>&) = delete;
 
     public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         Media()
             : IMedia()
             , _channel(*this)
@@ -219,12 +217,8 @@ namespace Core {
             , _adminLock()
         {
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-        virtual ~Media()
-        {
-        }
+POP_WARNING()
+        ~Media() override = default;
 
     public:
         SOURCE& Source()

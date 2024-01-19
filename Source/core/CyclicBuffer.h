@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@
 // ---- Include system wide include files ----
 
 // ---- Include local include files ----
-#include "DataElementFile.h"
 #include "Module.h"
+#include "DataElementFile.h"
 
 #ifndef __WINDOWS__
 #include <semaphore.h>
@@ -41,15 +41,14 @@ namespace Core {
     // This class allows to share data over process boundaries. Private access can be arranged by taking a lock.
     // The lock is also Process Wide.
     // Whoever holds the lock, can privately read or write from the buffer.
-
     class EXTERNAL CyclicBuffer {
-    private:
+    public:
         CyclicBuffer() = delete;
         CyclicBuffer(const CyclicBuffer&) = delete;
         CyclicBuffer& operator=(const CyclicBuffer&) = delete;
 
-    public:
         CyclicBuffer(const string& fileName, const uint32_t mode, const uint32_t bufferSize, const bool overwrite);
+        CyclicBuffer(Core::DataElementFile& buffer, const bool initiator, const uint32_t offset, const uint32_t bufferSize, const bool overwrite);
         virtual ~CyclicBuffer();
 
     protected:
@@ -162,6 +161,18 @@ namespace Core {
         {
             return (_buffer.Storage().Name());
         }
+        inline uint32_t User(const string& userName) const
+        {
+            return (_buffer.User(userName));
+        }
+        inline uint32_t Group(const string& groupName) const
+        {
+            return (_buffer.Group(groupName));
+        }
+        inline uint32_t Permission(uint16_t mode) const
+        {
+            return (_buffer.Permission(mode));
+        }
         inline bool IsLocked() const
         {
             return ((std::atomic_load(&(_administration->_state)) & LOCKED) == LOCKED);
@@ -176,7 +187,7 @@ namespace Core {
         }
         inline bool IsValid() const
         {
-            return (_buffer.IsValid());
+            return (_administration != nullptr);
         }
         inline const File& Storage() const
         {
@@ -200,10 +211,11 @@ namespace Core {
         {
             return (_administration->_size);
         }        
-        bool Validate();
+        bool Open();
+        void Close();
       
         // THREAD SAFE
-        // If there are thread blocked in the Lock, they can be relinquised by
+        // If there are threads blocked in the Lock, they can be relinquised by
         // calling this method. This method, will un-block, all blocking calls
         // on the lock.
         void Alert();
@@ -220,7 +232,7 @@ namespace Core {
         uint32_t Peek(uint8_t buffer[], const uint32_t length) const;
         // Extract data from the cyclic buffer. Read, is destructive. The cyclic tail
         // pointer is progressed by the amount of data being inserted.
-        uint32_t Read(uint8_t buffer[], const uint32_t length);
+        uint32_t Read(uint8_t buffer[], const uint32_t length, bool partialRead = false);
 
         // Insert data into the cyclic buffer. By definition the head pointer is
         // progressed after the write.
@@ -234,12 +246,29 @@ namespace Core {
 
         virtual void DataAvailable();
 
+    protected:
+        inline bool Unlink()
+        {
+            _administration = nullptr;
+            return (_buffer.Unlink());
+        }
+        inline bool Destroy()
+        {
+            _administration = nullptr;
+            return (_buffer.Destroy());
+        }
+ 
     private:
         // If the write occures, this method is called to determine the amount of spaces
         // that should be cleared out. The returned number of bytes must be equal to, or
         // larger than the minimumBytesToOverwrite. This method allows for skipping frames
         // if they are prefixed by a size, for example.
         virtual uint32_t GetOverwriteSize(Cursor& cursor);
+
+        // If the read occures, this method is called to determine the amount of data
+        // that should really be read. The returned number of bytes must be equal to, or
+        // less than the CursorSize. This method allows for creating user length data in
+        // a generic cyclic buffer file.
         virtual uint32_t GetReadSize(Cursor& cursor);
 
         // Makes sure "required" is available. If not, tail is moved in a smart way.

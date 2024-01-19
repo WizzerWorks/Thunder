@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -205,7 +205,6 @@ namespace Core {
             (void)closedir(dp);
         }
     }
-
 #endif
     /*
     // Get the Processes with this name.
@@ -257,7 +256,7 @@ namespace Core {
         , _index(0)
     {
 #ifndef __WINDOWS__
-        FindChildren(_pids, [=](const uint32_t foundparentPID, const uint32_t childPID) {
+        FindChildren(_pids, [=](const process_t foundparentPID, const uint32_t childPID) {
             bool accept = false;
             char fullname[PATH_MAX];
             ProcessName(foundparentPID, fullname, sizeof(fullname));
@@ -275,13 +274,13 @@ namespace Core {
     }
 
     // Get the Child Processes with a name name from a Parent pid
-    ProcessInfo::Iterator::Iterator(const uint32_t parentPID, const string& childname, const bool removepath)
+    ProcessInfo::Iterator::Iterator(const process_t parentPID, const string& childname, const bool removepath)
         : _pids()
         , _current()
         , _index(0)
     {
 #ifndef __WINDOWS__
-        FindChildren(_pids, [=](const uint32_t foundparentPID, const uint32_t childPID) {
+        FindChildren(_pids, [=](const process_t foundparentPID, const uint32_t childPID) {
             bool accept = false;
 
             if (parentPID == foundparentPID) {
@@ -296,7 +295,7 @@ namespace Core {
     }
 
     // Get the Children of the given PID.
-    ProcessInfo::Iterator::Iterator(const uint32_t parentPID)
+    ProcessInfo::Iterator::Iterator(const process_t parentPID)
     {
 #ifdef __WINDOWS__
         HANDLE hSnapShot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -420,8 +419,21 @@ namespace Core {
             }
         }
 #else
-        _memory.MemoryStats();
-        result = _memory.RSS();
+        int fd;
+        TCHAR buffer[128];
+        int VmRSS = 0;
+
+        snprintf(buffer, sizeof(buffer), "/proc/%d/statm", _pid);
+        if ((fd = open(buffer, O_RDONLY)) > 0) {
+            ssize_t readAmount = 0;
+            if ((readAmount = read(fd, buffer, sizeof(buffer))) > 0) {
+                ssize_t nulIndex = std::min(readAmount, static_cast<ssize_t>(sizeof(buffer) - 1));
+                buffer[nulIndex] = '\0';
+                sscanf(buffer, "%*d %d", &VmRSS);
+                result = VmRSS * PageSize;
+            }
+            close(fd);
+        }
 #endif
 
         return (result);
@@ -438,8 +450,21 @@ namespace Core {
             }
         }
 #else
-        _memory.MemoryStats();
-        result = _memory.Shared();
+        int fd;
+        TCHAR buffer[128];
+        int Share = 0;
+
+        snprintf(buffer, sizeof(buffer), "/proc/%d/statm", _pid);
+        if ((fd = open(buffer, O_RDONLY)) > 0) {
+            ssize_t readAmount = 0;
+            if ((readAmount = read(fd, buffer, sizeof(buffer))) > 0) {
+                ssize_t nulIndex = std::min(readAmount, static_cast<ssize_t>(sizeof(buffer) - 1));
+                buffer[nulIndex] = '\0';
+                sscanf(buffer, "%*d %*d %d", &Share);
+                result = Share * PageSize;
+            }
+            close(fd);
+        }
 #endif
 
         return (result);
@@ -559,11 +584,33 @@ namespace Core {
 #ifndef __WINDOWS__
             struct passwd* pwd = getpwnam(userName.c_str());
             if (pwd != nullptr) {
+                SupplementryGroups(userName);
                 result = (::setuid(pwd->pw_uid) == 0 ? ERROR_NONE : ERROR_UNAVAILABLE);
             }
 #endif
         }
         return (result);
+    }
+
+    void ProcessCurrent::SupplementryGroups(const string& userName)
+    {
+#ifndef __WINDOWS__
+        struct passwd* pwd = getpwnam(userName.c_str());
+        if (pwd != nullptr) {
+            int numberOfGroups = 0;
+
+            // Collect number of groups in which this user added
+            getgrouplist(pwd->pw_name, pwd->pw_gid, nullptr, &numberOfGroups);
+            gid_t* groups = static_cast<gid_t*>(ALLOCA(sizeof(gid_t) * numberOfGroups));
+            memset(groups, 0, (sizeof(gid_t) * numberOfGroups));
+
+            // Collect actual groups details
+            getgrouplist(pwd->pw_name, pwd->pw_gid, groups, &numberOfGroups);
+            if (numberOfGroups > 0) {
+                setgroups(numberOfGroups, groups);
+            }
+        }
+#endif
     }
 
     string ProcessCurrent::Group() const
@@ -610,13 +657,9 @@ namespace Core {
 
     bool ProcessTree::ContainsProcess(ThreadId pid) const
     {
-#ifdef __WINDOWS__
-#pragma warning(disable : 4312)
-#endif
+PUSH_WARNING(DISABLE_WARNING_CONVERSION_TO_GREATERSIZE)
         auto comparator = [pid](const ProcessInfo& processInfo) { return ((ThreadId)(processInfo.Id()) == pid); };
-#ifdef __WINDOWS__
-#pragma warning(default : 4312)
-#endif
+POP_WARNING()
         std::list<ProcessInfo>::const_iterator i = std::find_if(_processes.cbegin(), _processes.cend(), comparator);
         return (i != _processes.cend());
     }
@@ -626,25 +669,17 @@ namespace Core {
         processIds.clear();
 
         for (const ProcessInfo& process : _processes) {
-#ifdef __WINDOWS__
-#pragma warning(disable : 4312)
-#endif
+PUSH_WARNING(DISABLE_WARNING_CONVERSION_TO_GREATERSIZE)
             processIds.push_back((ThreadId)(process.Id()));
-#ifdef __WINDOWS__
-#pragma warning(default : 4312)
-#endif
+POP_WARNING()
         }
     }
 
     ThreadId ProcessTree::RootId() const
     {
-#ifdef __WINDOWS__
-#pragma warning(disable : 4312)
-#endif
+PUSH_WARNING(DISABLE_WARNING_CONVERSION_TO_GREATERSIZE)
         return (ThreadId)(_processes.front().Id());
-#ifdef __WINDOWS__
-#pragma warning(default : 4312)
-#endif
+POP_WARNING()
     }
 
     ProcessInfo::Memory::Memory(const process_t pid)
@@ -687,10 +722,12 @@ namespace Core {
         _rss = 0;
         _vss = 0;
         _shared = 0;
-        std::ostringstream pathToSmaps;
-        pathToSmaps << "/proc/" << _pid << "/smaps";
-
-        std::ifstream smaps(pathToSmaps.str());
+        
+        string path = "/proc/";
+        path += std::to_string(_pid);
+        path += "/smaps";
+        
+        std::ifstream smaps(path);
         if (!smaps.is_open()) {
             TRACE_L1(_T("Could not open /proc/%d/smaps. Memory monitoring of this process is unavailable!"), _pid);
         }
@@ -698,10 +735,11 @@ namespace Core {
         std::string line;
         std::string key;
         uint64_t value;
+        std::istringstream iss("");
 
         while (std::getline(smaps, line)) {
 
-            std::istringstream iss(line);
+            iss.str(line);
             iss >> key;
 
             if (key == _T("Size:")) {
@@ -726,6 +764,8 @@ namespace Core {
                 iss >> value;
                 _shared += value;
             }
+
+            iss.clear();
         }
     }
 }

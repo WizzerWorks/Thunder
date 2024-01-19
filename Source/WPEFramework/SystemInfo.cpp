@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,7 @@
 namespace WPEFramework {
 namespace PluginHost {
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     SystemInfo::SystemInfo(const Config& config, Core::IDispatch* callback)
         : _adminLock()
         , _config(config)
@@ -39,9 +37,7 @@ namespace PluginHost {
     {
         ASSERT(callback != nullptr);
     }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
     /* virtual */ SystemInfo::~SystemInfo()
     {
@@ -86,17 +82,51 @@ namespace PluginHost {
             _notificationClients.erase(index);
             notification->Release();
         } else {
-            TRACE_L1("Notification(%p) not found.", notification);
+            TRACE_L1("Notification(%p) not found.", static_cast<void*>(notification));
         }
 
         _adminLock.Unlock();
     }
 
-    void SystemInfo::Update()
+    // Use MAC address and let the framework handle the OTP ID.
+    const uint8_t* SystemInfo::RawDeviceId(const string& interfaceName) const
+    {
+        static uint8_t* MACAddress = nullptr;
+        static uint8_t MACAddressBuffer[Core::AdapterIterator::MacSize + 1];
+
+        if (MACAddress == nullptr) {
+            memset(MACAddressBuffer, 0, Core::AdapterIterator::MacSize + 1);
+
+            if (interfaceName.empty() != true) {
+
+                Core::AdapterIterator adapter(interfaceName);
+                if ((adapter.IsValid() == true) && adapter.HasMAC() == true) {
+                    adapter.MACAddress(&MACAddressBuffer[1], Core::AdapterIterator::MacSize);
+                }
+            } else {
+
+                Core::AdapterIterator adapters;
+                while ((adapters.Next() == true)) {
+                    if (adapters.HasMAC() == true) {
+                        adapters.MACAddress(&MACAddressBuffer[1], Core::AdapterIterator::MacSize);
+                        break;
+                    }
+                }
+            }
+            MACAddressBuffer[0] = Core::AdapterIterator::MacSize;
+            MACAddress = &MACAddressBuffer[0];
+        }
+
+        return MACAddress;
+    }
+
+    void SystemInfo::Update(const bool doCallback)
     {
         _adminLock.Lock();
 
-        _callback->Dispatch();
+        if (doCallback == true) {
+            _callback->Dispatch();
+        }
 
         ClientIterator index(_notificationClients);
 
@@ -231,9 +261,15 @@ namespace PluginHost {
     }
 
     // Software information
-    /* virtual */ string SystemInfo::BuildTreeHash() const
+    string SystemInfo::BuildTreeHash() const /* override */
     {
         return (_T(EXPAND_AND_QUOTE(TREE_REFERENCE)));
     }
+
+    string SystemInfo::Version() const /* override */
+    {
+        return (Core::Format(_T("%d.%d.%d"), PluginHost::Major, PluginHost::Minor, PluginHost::Patch));
+    }
+
 } //namspace Plugin
 } // namespace WPEFramework

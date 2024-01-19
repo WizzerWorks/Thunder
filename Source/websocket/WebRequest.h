@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 namespace WPEFramework {
 namespace Web {
+    using ProtocolsArray = Core::TokenizedStringList<',', true>;
+
     static const uint8_t MajorVersion = 1;
     static const uint8_t MinorVersion = 1;
 
@@ -62,12 +64,12 @@ namespace Web {
         MIME_UNKNOWN
     };
 
-    bool EXTERNAL MIMETypeForFile(const string path, string& fileToService, MIMETypes& mimeType);
-
     enum EncodingTypes {
         ENCODING_GZIP,
         ENCODING_UNKNOWN
     };
+
+    bool EXTERNAL MIMETypeAndEncodingForFile(const string path, string& fileToService, MIMETypes& mimeType, EncodingTypes& encoding);
 
     enum TransferTypes {
         TRANSFER_CHUNKED,
@@ -80,7 +82,7 @@ namespace Web {
     };
 
     struct EXTERNAL IBody {
-        virtual ~IBody(){};
+        virtual ~IBody() = default;
 
         // The Serialize/Deserialize methods mark the start of an upcoming serialization/deserialization
         // of the object. These methods allow for preparation of content to be Serialised or Deserialized.
@@ -102,6 +104,7 @@ namespace Web {
         Signature()
             : _type(Crypto::HASH_MD5)
         {
+            ::memset(_hashValue, 0, sizeof(_hashValue));
         }
         Signature(const Crypto::EnumHashType& type, const uint8_t hash[])
             : _type(type)
@@ -157,7 +160,8 @@ namespace Web {
     class EXTERNAL Authorization {
     public:
         enum type {
-            BEARER
+            BEARER,
+            BASIC
         };
 
     public:
@@ -292,23 +296,22 @@ namespace Web {
             };
             const static uint16_t EOL_MARKER = 0x8000;
 
+        public:
             Serializer(const Serializer&) = delete;
             Serializer& operator=(const Serializer&) = delete;
 
-        public:
             Serializer()
                 : _state(VERB)
                 , _offset(0)
                 , _keyIndex(0)
                 , _value()
+                , _bodyLength(0)
                 , _buffer(nullptr)
                 , _lock()
                 , _current()
             {
             }
-            ~Serializer()
-            {
-            }
+            virtual ~Serializer() = default;
 
         public:
             virtual void Serialized(const Web::Request& element) = 0;
@@ -362,26 +365,23 @@ namespace Web {
             };
             typedef Core::ParserType<Core::TerminatorCarriageReturnLineFeed, Deserializer> Parser;
 
+        public:
             Deserializer(const Deserializer&) = delete;
             Deserializer& operator=(const Deserializer&) = delete;
 
-        public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
             Deserializer()
                 : _lock()
                 , _current()
                 , _state(VERB)
+                , _keyWord(Web::Request::keywords::WEBSOCKET_VERSION)
                 , _parser(*this)
+                , _zlib()
+                , _zlibResult(0)
             {
             }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-            ~Deserializer()
-            {
-            }
+POP_WARNING()
+            virtual ~Deserializer() = default;
 
         public:
             inline void Flush()
@@ -477,9 +477,7 @@ namespace Web {
                     , _ready(readyFlag)
                 {
                 }
-                virtual ~SerializerImpl()
-                {
-                }
+                ~SerializerImpl() override = default;
 
             public:
                 virtual void Serialized(const Request& /* element */)
@@ -520,9 +518,7 @@ namespace Web {
                     , _destination(destination)
                 {
                 }
-                virtual ~DeserializerImpl()
-                {
-                }
+                virtual ~DeserializerImpl() override = default;
 
             public:
                 // The whole request object is deserialised..
@@ -624,7 +620,7 @@ namespace Web {
         Core::OptionalType<string> AccessControlHeaders;
         Core::OptionalType<uint16_t> AccessControlMethod;
         Core::OptionalType<string> WebSocketKey;
-        Core::OptionalType<string> WebSocketProtocol;
+        Core::OptionalType<ProtocolsArray> WebSocketProtocol;
         Core::OptionalType<uint32_t> WebSocketVersion;
         Core::OptionalType<string> WebSocketExtensions;
         Core::OptionalType<string> Man;
@@ -639,21 +635,21 @@ namespace Web {
         template <typename BODYTYPE>
         inline void Body(const Core::ProxyType<BODYTYPE>& body)
         {
-            _body = Core::proxy_cast<IBody>(body);
+            _body = Core::ProxyType<IBody>(body);
         }
         template <typename BODYTYPE>
         inline Core::ProxyType<BODYTYPE> Body()
         {
             ASSERT(HasBody() == true);
 
-            return (Core::proxy_cast<BODYTYPE>(_body));
+            return (Core::ProxyType<BODYTYPE>(_body));
         }
         template <typename BODYTYPE>
         inline Core::ProxyType<const BODYTYPE> Body() const
         {
             ASSERT(HasBody() == true);
 
-            return (Core::proxy_cast<const BODYTYPE>(_body));
+            return (Core::ProxyType<const BODYTYPE>(_body));
         }
         inline void Mode(const MarshalType mode)
         {
@@ -674,7 +670,7 @@ namespace Web {
                 end = buffer.find_first_of(DELIMETERS, start);
                 if (end - start > 0) {
                     string word = string(buffer, start, end - start);
-                    std::transform(word.begin(), word.end(), word.begin(), std::ptr_fun<int, int>(std::toupper));
+                    std::transform(word.begin(), word.end(), word.begin(), [](TCHAR c){ return std::toupper(c); } );
                     if (word == strValue) {
                         status = true;
                         break;

@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,11 +27,12 @@ namespace WPEFramework {
 namespace PluginHost {
 
     class SystemInfo : public PluginHost::ISubSystem {
-    private:
+    public:
         SystemInfo() = delete;
         SystemInfo(const SystemInfo&) = delete;
         SystemInfo& operator=(const SystemInfo&) = delete;
 
+    private:
         class Id : public PluginHost::ISubSystem::IIdentifier {
         public:
             Id(const Id&) = delete;
@@ -56,7 +57,7 @@ namespace PluginHost {
             uint8_t Identifier(const uint8_t length, uint8_t buffer[]) const override;
 
             bool Set(const PluginHost::ISubSystem::IIdentifier* info);
-            
+
             inline bool Set(const uint8_t length, const uint8_t buffer[],
                             const string& architecture,
                             const string& chipset,
@@ -77,8 +78,8 @@ namespace PluginHost {
                 _identifier[0] = length;
                 _identifier[length + 1] = '\0';
 
-                if ((_architecture != architecture) || 
-                    (_chipset != chipset) || 
+                if ((_architecture != architecture) ||
+                    (_chipset != chipset) ||
                     (_firmwareVersion != firmwareversion))
                 {
                     _architecture = architecture;
@@ -105,7 +106,35 @@ namespace PluginHost {
             string _firmwareVersion;
         };
 
-        typedef RPC::IteratorType<PluginHost::ISubSystem::IProvisioning> Provisioning;
+        class Provisioning : public RPC::IteratorType<PluginHost::ISubSystem::IProvisioning> {
+        public:
+            Provisioning(const Provisioning&) = delete;
+            Provisioning& operator=(const Provisioning&) = delete;
+
+            Provisioning() = delete;
+
+            Provisioning(PluginHost::ISubSystem::IProvisioning* info)
+                : RPC::IteratorType<PluginHost::ISubSystem::IProvisioning>(info)
+                , _storage(info->Storage())
+            {
+            }
+
+            Provisioning(std::list<std::string>&& labels, const std::string& storage)
+                : RPC::IteratorType<PluginHost::ISubSystem::IProvisioning>(labels)
+                , _storage(storage)
+            {
+            }
+
+            ~Provisioning() override = default;
+
+            string Storage() const override
+            {
+                return _storage;
+            }
+
+        private:
+            string _storage;
+        };
 
         class Internet : public PluginHost::ISubSystem::IInternet {
         public:
@@ -180,17 +209,16 @@ namespace PluginHost {
 
         class Location : public PluginHost::ISubSystem::ILocation {
         public:
-            Location() = delete;
             Location(const Location&) = delete;
             Location& operator=(const Location&) = delete;
 
-            Location(const int32_t latitude, const int32_t longitude)
+            Location()
                 : _timeZone()
                 , _country()
                 , _region()
                 , _city()
-                , _latitude(latitude)
-                , _longitude(longitude)
+                , _latitude(51977956)
+                , _longitude(5726384)
             {
             }
             ~Location() override = default;
@@ -218,11 +246,11 @@ namespace PluginHost {
             {
                 bool result(false);
 
-                if (_timeZone  != timeZone || 
-                    _country   != country  || 
-                    _region    != region   || 
-                    _city      != city     || 
-                    _latitude  != latitude || 
+                if (_timeZone  != timeZone ||
+                    _country   != country  ||
+                    _region    != region   ||
+                    _city      != city     ||
+                    _latitude  != latitude ||
                     _longitude != longitude) {
 
                     _timeZone = timeZone;
@@ -286,11 +314,11 @@ namespace PluginHost {
 
     public:
         SystemInfo(const Config& config, Core::IDispatch* callback);
-        virtual ~SystemInfo();
+        ~SystemInfo() override;
 
     public:
-        virtual void Register(PluginHost::ISubSystem::INotification* notification) override;
-        virtual void Unregister(PluginHost::ISubSystem::INotification* notification) override;
+        void Register(PluginHost::ISubSystem::INotification* notification) override;
+        void Unregister(PluginHost::ISubSystem::INotification* notification) override;
 
         string SecurityCallsign() const
         {
@@ -306,32 +334,19 @@ namespace PluginHost {
 
             return (result);
         }
-
-        // Software information
-        virtual string BuildTreeHash() const override;
-
         // Event methods
-        virtual void Set(const subsystem type, Core::IUnknown* information) override
+        Core::hresult Set(const subsystem type, Core::IUnknown* information) override
         {
-            bool sendUpdate(type < NEGATIVE_START ? IsActive(type) == false : IsActive(static_cast<subsystem>(type - NEGATIVE_START)) == true);
+            Core::hresult result = Core::ERROR_NONE;
+            bool sendUpdate(type < NEGATIVE_START ? IsActive(type) == false : false);
 
             switch (type) {
             case PLATFORM: {
                 SYSLOG(Logging::Startup, (_T("EVENT: Platform")));
                 break;
             }
-            case NOT_PLATFORM: {
-                /* Clearing the flag does not require information */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Platform")));
-                break;
-            }
             case NETWORK: {
                 SYSLOG(Logging::Startup, (_T("EVENT: Network")));
-                break;
-            }
-            case NOT_NETWORK: {
-                /* Clearing the flag does not require information */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Network")));
                 break;
             }
             case IDENTIFIER: {
@@ -345,17 +360,17 @@ namespace PluginHost {
                         _identifier->Release();
                     }
 
-                    _identifier = Core::Service<Id>::Create<Id>();
-                    const uint8_t* id(Core::SystemInfo::Instance().RawDeviceId());
-                    _identifier->Set(id[0], &id[1], 
-                            Core::SystemInfo::Instance().Architecture(), 
-                            Core::SystemInfo::Instance().Chipset(), 
+                    _identifier = Core::ServiceType<Id>::Create<Id>();
+                    const uint8_t* id(RawDeviceId(_config.EthernetCard()));
+                    _identifier->Set(id[0], &id[1],
+                            Core::SystemInfo::Instance().Architecture(),
+                            Core::SystemInfo::Instance().Chipset(),
                             Core::SystemInfo::Instance().FirmwareVersion()
                     );
 
                     _adminLock.Unlock();
                 } else {
-                    Id* id = Core::Service<Id>::Create<Id>();
+                    Id* id = Core::ServiceType<Id>::Create<Id>();
                     sendUpdate = id->Set(info) || sendUpdate;
 
                     info->Release();
@@ -376,11 +391,6 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: FirmwareVersion: %s"), _identifier->FirmwareVersion().c_str()));
                 break;
             }
-            case NOT_IDENTIFIER: {
-                /* Clearing the flag does not require information */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Identifier")));
-                break;
-            }
             case INTERNET: {
                 PluginHost::ISubSystem::IInternet* info = (information != nullptr ? information->QueryInterface<PluginHost::ISubSystem::IInternet>() : nullptr);
 
@@ -392,12 +402,12 @@ namespace PluginHost {
                         _internet->Release();
                     }
 
-                    _internet = Core::Service<Internet>::Create<Internet>();
+                    _internet = Core::ServiceType<Internet>::Create<Internet>();
                     _internet->Set(_T("127.0.0.1"));
                     _adminLock.Unlock();
 
                 } else {
-                    Internet* internet = Core::Service<Internet>::Create<Internet>();
+                    Internet* internet = Core::ServiceType<Internet>::Create<Internet>();
                     sendUpdate = internet->Set(info) || sendUpdate;
 
                     info->Release();
@@ -415,47 +425,27 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: Internet [%s]"), _internet->PublicIPAddress().c_str()));
                 break;
             }
-            case NOT_INTERNET: {
-                /* Clearing the flag does not require information */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Internet")));
-                break;
-            }
             case LOCATION: {
                 PluginHost::ISubSystem::ILocation* info = (information != nullptr ? information->QueryInterface<PluginHost::ISubSystem::ILocation>() : nullptr);
 
-                if (info == nullptr) {
-                    _adminLock.Lock();
+                Location* location = Core::ServiceType<Location>::Create<Location>();
 
-                    if (_location != nullptr) {
-                        _location->Release();
-                    }
-
-                    _location = Core::Service<Location>::Create<Location>(_config.Latitude(), _config.Longitude());
-
-                    _adminLock.Unlock();
-                } else {
-                    Location* location = Core::Service<Location>::Create<Location>(_config.Latitude(), _config.Longitude());
+                if (info != nullptr) {
                     sendUpdate = location->Set(info) || sendUpdate;
-
                     info->Release();
-
-                    _adminLock.Lock();
-
-                    if (_location != nullptr) {
-                        _location->Release();
-                    }
-
-                    _location = location;
-                    _adminLock.Unlock();
                 }
+
+                _adminLock.Lock();
+
+                if (_location != nullptr) {
+                    _location->Release();
+                }
+
+                _location = location;
+                _adminLock.Unlock();
 
                 SYSLOG(Logging::Startup, (_T("EVENT: TimeZone: %s, Country: %s, Region: %s, City: %s"), _location->TimeZone().c_str(), _location->Country().c_str(), _location->Region().c_str(), _location->City().c_str()));
 
-                break;
-            }
-            case NOT_LOCATION: {
-                /* Clearing the flag does not require information */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Location")));
                 break;
             }
             case TIME: {
@@ -469,12 +459,12 @@ namespace PluginHost {
                         _time->Release();
                     }
 
-                    _time = Core::Service<Time>::Create<Time>();
+                    _time = Core::ServiceType<Time>::Create<Time>();
                     _time->Set(Core::Time::Now().Ticks());
 
                     _adminLock.Unlock();
                 } else {
-                    Time* time = Core::Service<Time>::Create<Time>();
+                    Time* time = Core::ServiceType<Time>::Create<Time>();
                     sendUpdate = time->Set(info) || sendUpdate;
 
                     info->Release();
@@ -492,25 +482,31 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: Time: %s"), Core::Time(_time->TimeSync()).ToRFC1123(false).c_str()));
                 break;
             }
-            case NOT_TIME: {
-                /* Clearing the flag does not require information */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Time")));
-                break;
-            }
             case PROVISIONING: {
-                PluginHost::ISubSystem::IProvisioning* info = (information != nullptr ? information->QueryInterface<PluginHost::ISubSystem::IProvisioning>() : nullptr);
+                PluginHost::ISubSystem::IProvisioning* info = (information != nullptr) ? information->QueryInterface<PluginHost::ISubSystem::IProvisioning>() : nullptr;
 
-                _adminLock.Lock();
+                if (info == nullptr) {
+                    _adminLock.Lock();
 
-                if (_provisioning != nullptr) {
-                    _provisioning->Release();
-                }
+                    if (_provisioning != nullptr) {
+                        _provisioning->Release();
+                        _provisioning = nullptr;
+                    }
 
-                _provisioning = Core::Service<Provisioning>::Create<PluginHost::ISubSystem::IProvisioning>(info);
+                    _provisioning = Core::ServiceType<Provisioning>::Create<PluginHost::ISubSystem::IProvisioning>(std::move(std::list<std::string>()), "");
 
-                _adminLock.Unlock();
+                    _adminLock.Unlock();
+                } else {
+                    _adminLock.Lock();
 
-                if (info != nullptr) {
+                    if (_provisioning != nullptr) {
+                        _provisioning->Release();
+                    }
+
+                    _provisioning = Core::ServiceType<Provisioning>::Create<PluginHost::ISubSystem::IProvisioning>(info);
+
+                    _adminLock.Unlock();
+
                     info->Release();
                 }
 
@@ -518,19 +514,9 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: Provisioning")));
                 break;
             }
-            case NOT_PROVISIONING: {
-                /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Provisioning")));
-                break;
-            }
             case DECRYPTION: {
                 /* No information to set yet */
                 SYSLOG(Logging::Startup, (_T("EVENT: Decryption")));
-                break;
-            }
-            case NOT_DECRYPTION: {
-                /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Decryption")));
                 break;
             }
             case GRAPHICS: {
@@ -538,19 +524,9 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: Graphics")));
                 break;
             }
-            case NOT_GRAPHICS: {
-                /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Graphics")));
-                break;
-            }
             case WEBSOURCE: {
                 /* No information to set yet */
                 SYSLOG(Logging::Startup, (_T("EVENT: WebSource")));
-                break;
-            }
-            case NOT_WEBSOURCE: {
-                /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: WebSource")));
                 break;
             }
             case STREAMING: {
@@ -558,19 +534,14 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: Streaming")));
                 break;
             }
-            case NOT_STREAMING: {
-                /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Streaming")));
-                break;
-            }
             case BLUETOOTH: {
                 /* No information to set yet */
                 SYSLOG(Logging::Startup, (_T("EVENT: Bluetooth")));
                 break;
             }
-            case NOT_BLUETOOTH: {
+            case CRYPTOGRAPHY: {
                 /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Bluetooth")));
+                SYSLOG(Logging::Startup, (_T("EVENT: Cryptography")));
                 break;
             }
             case SECURITY: {
@@ -584,12 +555,12 @@ namespace PluginHost {
                         _security->Release();
                     }
 
-                    _security = Core::Service<Security>::Create<Security>();
+                    _security = Core::ServiceType<Security>::Create<Security>();
                     _security->Set(_T(""));
 
                     _adminLock.Unlock();
                 } else {
-                    Security* security = Core::Service<Security>::Create<Security>();
+                    Security* security = Core::ServiceType<Security>::Create<Security>();
                     sendUpdate = security->Set(info) || sendUpdate;
 
                     info->Release();
@@ -607,14 +578,15 @@ namespace PluginHost {
                 SYSLOG(Logging::Startup, (_T("EVENT: Security")));
                 break;
             }
-            case NOT_SECURITY: {
-                /* No information to set yet */
-                SYSLOG(Logging::Shutdown, (_T("EVENT: Security")));
-                break;
-            }
-
             default: {
-                ASSERT(false && "Unknown Event");
+                if (type >= NEGATIVE_START) {
+                    SYSLOG(Logging::Error, (_T("Setting a subsystem to disabled is not supported!")));
+                    result = Core::ERROR_NOT_SUPPORTED;
+                }
+                else {
+                    ASSERT(false && "Unknown event");
+                    result = Core::ERROR_UNAVAILABLE;
+                }
             }
             }
 
@@ -622,18 +594,98 @@ namespace PluginHost {
 
                 _adminLock.Lock();
 
-                if (type >= NEGATIVE_START) {
-                    _flags &= ~(1 << (type - NEGATIVE_START));
-                } else {
-                    _flags |= (1 << type);
-                }
+                _flags |= (1 << type);
 
                 _adminLock.Unlock();
 
-                Update();
+                Update(true);
             }
+
+            return (result);
         }
-        virtual const Core::IUnknown* Get(const subsystem type) const override
+        uint32_t Unset(const subsystem type)
+        {
+            ASSERT(type < NEGATIVE_START);
+
+            uint32_t result = Core::ERROR_NONE;
+            bool sendUpdate = IsActive(type);
+
+            switch (type) {
+            case PLATFORM: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Platform")));
+                break;
+            }
+            case NETWORK: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Network")));
+                break;
+            }
+            case IDENTIFIER: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Identifier")));
+                break;
+            }
+            case INTERNET: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Internet")));
+                break;
+            }
+            case TIME: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Time")));
+                break;
+            }
+            case LOCATION: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Location")));
+                break;
+            }
+            case PROVISIONING: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Provisioning")));
+                break;
+            }
+            case DECRYPTION: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Decryption")));
+                break;
+            }
+            case GRAPHICS: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Graphics")));
+                break;
+            }
+            case CRYPTOGRAPHY: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Cryptography")));
+                break;
+            }
+            case BLUETOOTH: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Bluetooth")));
+                break;
+            }
+            case WEBSOURCE: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: WebSource")));
+                break;
+            }
+            case STREAMING: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Streaming")));
+                break;
+            }
+            case SECURITY: {
+                SYSLOG(Logging::Shutdown, (_T("EVENT: Security")));
+                break;
+            }
+            default: {
+                ASSERT(false && "Unknown event!");
+                result = Core::ERROR_UNAVAILABLE;
+            }
+            }
+
+            _adminLock.Lock();
+
+            _flags &= ~(1 << type);
+
+            _adminLock.Unlock();
+
+            if (sendUpdate == true) {
+                Update(false);
+            }
+
+            return (result);
+        }
+        const Core::IUnknown* Get(const subsystem type) const override
         {
             const Core::IUnknown* result(nullptr);
 
@@ -666,15 +718,14 @@ namespace PluginHost {
                     result = _provisioning;
                     break;
                 }
-                case DECRYPTION: {
-                    /* No information to get yet */
-                    break;
-                }
-                case GRAPHICS: {
-                    /* No information to get yet */
-                    break;
-                }
-                case WEBSOURCE: {
+                case PLATFORM:
+                case DECRYPTION:
+                case GRAPHICS:
+                case WEBSOURCE:
+                case STREAMING:
+                case CRYPTOGRAPHY:
+                case SECURITY:
+                case BLUETOOTH: {
                     /* No information to get yet */
                     break;
                 }
@@ -692,7 +743,7 @@ namespace PluginHost {
 
             return result;
         }
-        virtual bool IsActive(const subsystem type) const override
+        bool IsActive(const subsystem type) const override
         {
             return ((type < END_LIST) && ((_flags & (1 << type)) != 0));
         };
@@ -701,16 +752,21 @@ namespace PluginHost {
             return (_flags);
         }
 
+        string BuildTreeHash() const;
+        string Version() const;
+
         BEGIN_INTERFACE_MAP(SystemInfo)
         INTERFACE_ENTRY(PluginHost::ISubSystem)
         END_INTERFACE_MAP
 
     private:
+        // First byte of the RawDeviceId is the length of the DeviceId to follow.
+        const uint8_t* RawDeviceId(const string& interfaceName) const;
+
         typedef Core::IteratorType<std::list<PluginHost::ISubSystem::INotification*>, PluginHost::ISubSystem::INotification*> ClientIterator;
 
         void RecursiveList(ClientIterator& index);
-
-        void Update();
+        void Update(const bool doCallback);
 
     private:
         mutable Core::CriticalSection _adminLock;

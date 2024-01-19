@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ class SingletonTypeThree {
         }
 };
 
-TEST(DISABLED_test_singleton, simple_singleton)
+TEST(test_singleton, simple_singleton)
 {
     static SingletonTypeOne& object1 = SingletonType<SingletonTypeOne>::Instance();
     static SingletonTypeOne& object_sample = SingletonType<SingletonTypeOne>::Instance();

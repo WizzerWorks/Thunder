@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,17 +31,17 @@ namespace Web {
     template <typename LINK, typename INBOUND, typename OUTBOUND, typename ALLOCATOR, typename TRANSFORM = NoTransform>
     class WebLinkType {
     private:
-        typedef typename INBOUND::Deserializer BaseDeserializer;
-        typedef typename OUTBOUND::Serializer BaseSerializer;
-        typedef WebLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR, TRANSFORM> ThisClass;
+        using BaseDeserializer = typename INBOUND::Deserializer;
+        using BaseSerializer = typename OUTBOUND::Serializer;
+        using ThisClass = WebLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR, TRANSFORM>;
+        using AllocatorType = typename std::remove_reference<ALLOCATOR>::type;
 
         class SerializerImpl : public BaseSerializer {
-        private:
-            SerializerImpl();
-            SerializerImpl(const SerializerImpl&);
-            SerializerImpl& operator=(const SerializerImpl&);
-
         public:
+            SerializerImpl() = delete;
+            SerializerImpl(const SerializerImpl&) = delete;
+            SerializerImpl& operator=(const SerializerImpl&) = delete;
+
             SerializerImpl(ThisClass& parent, const uint8_t queueSize)
                 : OUTBOUND::Serializer()
                 , _parent(parent)
@@ -49,9 +49,7 @@ namespace Web {
                 , _queue(queueSize)
             {
             }
-            virtual ~SerializerImpl()
-            {
-            }
+            ~SerializerImpl() override = default;
 
         public:
             void Submit(const Core::ProxyType<OUTBOUND>& element)
@@ -72,7 +70,7 @@ namespace Web {
             }
 
         private:
-            virtual void Serialized(const typename OUTBOUND::BaseElement& element)
+            void Serialized(const typename OUTBOUND::BaseElement& element) override
             {
                 _lock.Lock();
 
@@ -103,12 +101,11 @@ namespace Web {
         };
 
         class DeserializerImpl : public BaseDeserializer {
-        private:
-            DeserializerImpl();
-            DeserializerImpl(const DeserializerImpl&);
-            DeserializerImpl& operator=(const DeserializerImpl&);
-
         public:
+            DeserializerImpl() = delete;
+            DeserializerImpl(const DeserializerImpl&) = delete;
+            DeserializerImpl& operator=(const DeserializerImpl&) = delete;
+
             DeserializerImpl(ThisClass& parent, const uint8_t queueSize)
                 : INBOUND::Deserializer()
                 , _parent(parent)
@@ -121,12 +118,10 @@ namespace Web {
                 , _pool(allocator)
             {
             }
-            virtual ~DeserializerImpl()
-            {
-            }
+            ~DeserializerImpl() override = default;
 
         public:
-            virtual void Deserialized(typename INBOUND::BaseElement& element)
+            void Deserialized(typename INBOUND::BaseElement& element)
             {
                 ASSERT(&element == static_cast<typename INBOUND::BaseElement*>(&(*(_current))));
                 DEBUG_VARIABLE(element);
@@ -135,7 +130,7 @@ namespace Web {
 
                 _current.Release();
             }
-            virtual typename INBOUND::BaseElement* Element()
+            typename INBOUND::BaseElement* Element() override
             {
                 _current = _pool.Element();
 
@@ -143,13 +138,17 @@ namespace Web {
 
                 return static_cast<typename INBOUND::BaseElement*>(&(*_current));
             }
-            virtual bool LinkBody(typename INBOUND::BaseElement& element)
+            bool LinkBody(typename INBOUND::BaseElement& element) override
             {
                 ASSERT(&element == static_cast<typename INBOUND::BaseElement*>(&(*(_current))));
 
                 _parent.LinkBody(_current);
 
                 return (element.HasBody());
+            }
+            AllocatorType& Allocator()
+            {
+                return (_pool);
             }
 
         private:
@@ -168,6 +167,7 @@ namespace Web {
             template <typename... Args>
             HandlerType(PARENTCLASS& parent, Args&&... args)
                 : ACTUALLINK(std::forward<Args>(args)...)
+                , _activity(true)
                 , _parent(parent)
             {
             }
@@ -196,12 +196,12 @@ namespace Web {
             uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize) override
             {
                 _activity = true;
-                return (_parent.SendData(_parent, dataFrame, maxSendSize));
+                return (_parent.SendData( dataFrame, maxSendSize));
             }
             uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize) override
             {
                 _activity = true;
-                return (_parent.ReceiveData(_parent, dataFrame, receivedSize));
+                return (_parent.ReceiveData(dataFrame, receivedSize));
             }
             // Signal a state change, Opened, Closed or Accepted
             void StateChange() override
@@ -214,15 +214,12 @@ namespace Web {
             PARENTCLASS& _parent;
         };
 
-
     public:
         WebLinkType() = delete;
         WebLinkType(const WebLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>&) = delete;
         WebLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& operator=(const WebLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>&) = delete;
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         template <typename... Args>
         WebLinkType(const uint8_t queueSize, Args&&... args)
             : _serializerImpl(*this, queueSize)
@@ -237,10 +234,8 @@ namespace Web {
             , _channel(*this, std::forward<Args>(args)...)
         {
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-        virtual ~WebLinkType() 
+POP_WARNING()
+        virtual ~WebLinkType()
         {
             _channel.Close(Core::infinite);
         }
@@ -313,6 +308,11 @@ namespace Web {
             return (_channel.Link());
         }
  
+    protected:
+        AllocatorType& Allocator() {
+            return (_deserialiserImpl.Allocator());
+        }
+
     private:
         inline void Trigger()
         {
@@ -321,35 +321,32 @@ namespace Web {
         // -------------------------------------------------------------
         // Check for Transform methods Inbound/Outbound on _transformer
         // -------------------------------------------------------------
-        HAS_MEMBER(Transform, hasTransform);
+        IS_MEMBER_AVAILABLE(Transform, hasTransform);
 
-        typedef hasTransform<TRANSFORM, uint16_t (TRANSFORM::*)(BaseDeserializer&, uint8_t* data, const uint16_t maxSize)> TraitDeserializer;
-        typedef hasTransform<TRANSFORM, uint16_t (TRANSFORM::*)(BaseSerializer&, uint8_t* data, const uint16_t maxSize)> TraitSerializer;
-
-        template <typename CLASSNAME>
-        inline typename Core::TypeTraits::enable_if<CLASSNAME::TraitDeserializer::value, uint16_t>::type
-        ReceiveData(const CLASSNAME&, uint8_t* dataFrame, const uint16_t receivedSize)
+        template <typename CLASSNAME = TRANSFORM>
+        inline typename Core::TypeTraits::enable_if<hasTransform<CLASSNAME, uint16_t, BaseDeserializer&, uint8_t*, const uint16_t>::value, uint16_t>::type
+        ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize)
         {
             return (_transformer.Transform(_deserialiserImpl, dataFrame, receivedSize));
         }
 
-        template <typename CLASSNAME>
-        inline typename Core::TypeTraits::enable_if<!CLASSNAME::TraitDeserializer::value, uint16_t>::type
-        ReceiveData(const CLASSNAME&, uint8_t* dataFrame, const uint16_t receivedSize)
+        template <typename CLASSNAME = TRANSFORM>
+        inline typename Core::TypeTraits::enable_if<!hasTransform<CLASSNAME, uint16_t, BaseDeserializer&, uint8_t*, const uint16_t>::value, uint16_t>::type
+        ReceiveData( uint8_t* dataFrame, const uint16_t receivedSize)
         {
             return (_deserialiserImpl.Deserialize(dataFrame, receivedSize));
         }
 
-        template <typename CLASSNAME>
-        inline typename Core::TypeTraits::enable_if<CLASSNAME::TraitSerializer::value, uint16_t>::type
-        SendData(const CLASSNAME&, uint8_t* dataFrame, const uint16_t receivedSize)
+        template <typename CLASSNAME = TRANSFORM>
+        inline typename Core::TypeTraits::enable_if<hasTransform<CLASSNAME, uint16_t, BaseSerializer&, uint8_t*, const uint16_t>::value, uint16_t>::type
+        SendData(uint8_t* dataFrame, const uint16_t receivedSize)
         {
             return (_transformer.Transform(_serializerImpl, dataFrame, receivedSize));
         }
 
-        template <typename CLASSNAME>
-        inline typename Core::TypeTraits::enable_if<!CLASSNAME::TraitSerializer::value, uint16_t>::type
-        SendData(const CLASSNAME&, uint8_t* dataFrame, const uint16_t receivedSize)
+        template <typename CLASSNAME=TRANSFORM>
+        inline typename Core::TypeTraits::enable_if<!hasTransform<CLASSNAME, uint16_t, BaseSerializer&, uint8_t*, const uint16_t>::value, uint16_t>::type
+        SendData(uint8_t* dataFrame, const uint16_t receivedSize)
         {
             return (_serializerImpl.Serialize(dataFrame, receivedSize));
         }

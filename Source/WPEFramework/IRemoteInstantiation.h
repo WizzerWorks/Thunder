@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ namespace PluginHost {
 
         enum { ID = RPC::IDS::ID_REMOTE_INSTANTIATION };
 
-        virtual ~IRemoteInstantiation() {}
+        ~IRemoteInstantiation() override = default;
 
         // Overview:
         //          HOST                                      TARGET
@@ -53,7 +53,7 @@ namespace PluginHost {
             const uint32_t version,
             const string& user,
             const string& group,
-            const string& linkLoaderPath,
+            const string& systemRootPath,
             const uint8_t threads,
             const int8_t priority,
             const string configuration) = 0;

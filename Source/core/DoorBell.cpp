@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
  * limitations under the License.
  */
 
+#include "AccessControl.h"
 #include "DoorBell.h"
 
 #ifdef __WINDOWS__
@@ -124,8 +125,8 @@ namespace Core {
                 }
                 else {
 #ifndef __WINDOWS__
-                    if ((_doorbell.Type() == NodeId::TYPE_DOMAIN) && (_doorbell.Rights() <= 0777)) {
-                        if (::chmod(_doorbell.HostName().c_str(), _doorbell.Rights()) != 0) {
+                    if (_doorbell.Type() == NodeId::TYPE_DOMAIN) {
+                        if (AccessControl::Apply(_doorbell) != Core::ERROR_NONE) {
                             ::close(_receiveSocket);
                             _receiveSocket = INVALID_SOCKET;
                         }
@@ -184,20 +185,17 @@ namespace Core {
 #endif
     }
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     DoorBell::DoorBell(const TCHAR sourceName[])
         : _connectPoint(*this, Core::NodeId(sourceName))
         , _signal(false, true)
     {
     }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
     DoorBell::~DoorBell()
     {
+        _signal.SetEvent();
     }
 }
 }

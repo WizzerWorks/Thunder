@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,10 +30,9 @@ add_executable(${TARGET}
 # Non-buildable interface target to carry the definitions for users
 add_library(COMProcess INTERFACE)
 add_library(${NAMESPACE}COMProcess::${NAMESPACE}COMProcess ALIAS COMProcess)
-target_compile_definitions(COMProcess
-        INTERFACE
-          HOSTING_COMPROCESS=${TARGET}
-        )
+target_compile_definitions(COMProcess INTERFACE HOSTING_COMPROCESS=${TARGET})
+
+target_compile_options (${TARGET} PRIVATE -Wno-psabi)
 
 target_link_libraries(${TARGET}
         PUBLIC
@@ -41,8 +40,10 @@ target_link_libraries(${TARGET}
         PRIVATE
           CompileSettingsDebug::CompileSettingsDebug
           ${NAMESPACE}Core::${NAMESPACE}Core
-          ${NAMESPACE}Tracing::${NAMESPACE}Tracing
+          ${NAMESPACE}Messaging::${NAMESPACE}Messaging
           ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+          ${NAMESPACE}WebSocket::${NAMESPACE}WebSocket
+          ${NAMESPACE}COM::${NAMESPACE}COM
         )
         
 if (WARNING_REPORTING)
@@ -52,21 +53,8 @@ if (WARNING_REPORTING)
             )
 endif()
 
-if (PROTOCOLS)
-    target_link_libraries(${TARGET}
-            PRIVATE
-              ${NAMESPACE}Protocols::${NAMESPACE}Protocols
-            )
-else()
-    target_link_libraries(${TARGET}
-            PRIVATE
-              ${NAMESPACE}WebSocket::${NAMESPACE}WebSocket
-              ${NAMESPACE}COM::${NAMESPACE}COM
-            )
-endif ()
-
 if(BREAKPAD_FOUND)
-    add_definitions(-DUSE_BREAKPAD=1)
+    add_definitions(-DUSE_BREAKPAD=1 -D__STDC_FORMAT_MACROS)
     target_link_libraries(${TARGET} PUBLIC ${BREAKPAD_LIBRARIES} pthread)
     target_include_directories(${TARGET} PUBLIC ${BREAKPAD_INCLUDE_DIRS})
 endif(BREAKPAD_FOUND)

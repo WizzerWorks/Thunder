@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,14 +28,14 @@ ENUM_CONVERSION_BEGIN(PluginHost::IStateControl::state)
     { PluginHost::IStateControl::SUSPENDED, _TXT("SUSPENDED") },
     { PluginHost::IStateControl::RESUMED, _TXT("RESUMED") },
 
-    ENUM_CONVERSION_END(PluginHost::IStateControl::state);
+    ENUM_CONVERSION_END(PluginHost::IStateControl::state)
 
     ENUM_CONVERSION_BEGIN(PluginHost::IStateControl::command)
 
     { PluginHost::IStateControl::SUSPEND, _TXT("Suspend") },
     { PluginHost::IStateControl::RESUME, _TXT("Resume") },
 
-    ENUM_CONVERSION_END(PluginHost::IStateControl::command);
+    ENUM_CONVERSION_END(PluginHost::IStateControl::command)
 
 namespace PluginHost
 {

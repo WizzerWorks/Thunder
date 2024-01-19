@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@
  */
 
 #include "PluginServer.h"
+#include <fstream>
 
 #ifndef __WINDOWS__
 #include <dlfcn.h> // for dladdr
 #include <syslog.h>
-#include <regex>
 #endif
 
 MODULE_NAME_DECLARATION(BUILD_REFERENCE)
@@ -31,14 +31,16 @@ namespace WPEFramework {
     static PluginHost::Config* _config = nullptr;
     static PluginHost::Server* _dispatcher = nullptr;
     static bool _background = false;
+    static bool _atExitActive = true;
 
 namespace PluginHost {
 
     class ConsoleOptions : public Core::Options {
     public:
         ConsoleOptions(int argumentCount, TCHAR* arguments[])
-            : Core::Options(argumentCount, arguments, _T(":bhc:"))
+            : Core::Options(argumentCount, arguments, _T(":bhc:fF"))
             , configFile(Server::ConfigFile)
+            , flushMode(Messaging::MessageUnit::flush::OFF)
         {
             Parse();
         }
@@ -48,6 +50,7 @@ namespace PluginHost {
 
     public:
         const TCHAR* configFile;
+        Messaging::MessageUnit::flush flushMode;
 
     private:
         virtual void Option(const TCHAR option, const TCHAR* argument)
@@ -56,9 +59,16 @@ namespace PluginHost {
             case 'c':
                 configFile = argument;
                 break;
+            case 'f':
+                flushMode = Messaging::MessageUnit::flush::FLUSH;
+                break;
+            case 'F':
+                flushMode = Messaging::MessageUnit::flush::FLUSH_ABBREVIATED;
+                break;
 #ifndef __WINDOWS__
             case 'b':
                 _background = true;
+                Core::SystemInfo::SetEnvironment(_T("THUNDER_BACKGROUND"), _T("true"));
                 break;
 #endif
             case 'h':
@@ -78,9 +88,7 @@ namespace PluginHost {
         AdapterObserver(const AdapterObserver&) = delete;
         AdapterObserver& operator=(const AdapterObserver&) = delete;
 
-        #ifdef __WINDOWS__
-        #pragma warning(disable: 4355)
-        #endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         AdapterObserver(string interface)
             : _signal(false, true)
             , _interface(interface)
@@ -94,9 +102,7 @@ namespace PluginHost {
                 _signal.SetEvent();
             }
         }
-        #ifdef __WINDOWS__
-        #pragma warning(default: 4355)
-        #endif
+POP_WARNING()
         ~AdapterObserver() override
         {
             _observer.Close();
@@ -132,92 +138,165 @@ namespace PluginHost {
 
     class ExitHandler : public Core::Thread {
     private:
+        ExitHandler() = delete;
         ExitHandler(const ExitHandler&) = delete;
         ExitHandler& operator=(const ExitHandler&) = delete;
 
-    public:
-        ExitHandler()
+        ExitHandler(PluginHost::Server* destructor)
             : Core::Thread(Core::Thread::DefaultStackSize(), nullptr)
+            , _destructor(destructor)
         {
+            ASSERT(_destructor != nullptr);
         }
-        virtual ~ExitHandler()
+
+    public:
+        ~ExitHandler() override
         {
             Stop();
             Wait(Core::Thread::STOPPED, Core::infinite);
         }
-
-        static void Construct() {
+        static void DumpMetadata() {
             _adminLock.Lock();
-            if (_instance == nullptr) {
-                _instance = new WPEFramework::PluginHost::ExitHandler();
+            if (_dispatcher != nullptr) {
+                _dispatcher->DumpMetadata();
+            }
+            _adminLock.Unlock();
+        }
+        static void StartShutdown() {
+            _adminLock.Lock();
+            if ((_dispatcher != nullptr) && (_instance == nullptr)) {
+                _instance = new WPEFramework::PluginHost::ExitHandler(_dispatcher);
+                _dispatcher = nullptr;
                 _instance->Run();
             }
             _adminLock.Unlock();
         }
         static void Destruct() {
+
             _adminLock.Lock();
-            if (_instance != nullptr) {
-                delete _instance; //It will wait till the worker execution completed
-                _instance = nullptr;
-            } else {
-                CloseDown();
+
+            if (_instance == nullptr) {
+
+                PluginHost::Server* destructor = _dispatcher;
+
+                _dispatcher = nullptr;
+
+                _adminLock.Unlock();
+
+                if (destructor != nullptr) {
+                    CloseDown (destructor);
+                }
             }
-            _adminLock.Unlock();
+            else {
+                ExitHandler* destructor = _instance;
+                _instance = nullptr;
+ 
+                _adminLock.Unlock();
+
+                delete destructor; //It will wait till the worker execution completed
+            }
         }
 
     private:
         virtual uint32_t Worker() override
         {
-            CloseDown();
+            CloseDown(_destructor);
             Block();
             return (Core::infinite);
         }
-        static void CloseDown()
+        static void CloseDown(PluginHost::Server* destructor)
         {
-            TRACE_L1("Entering @Exit. Cleaning up process: %d.", Core::ProcessInfo().Id());
-
-            if (_dispatcher != nullptr) {
-                PluginHost::Server* destructor = _dispatcher;
-                destructor->Close();
-                _dispatcher = nullptr;
-                delete destructor;
-
-                delete _config;
-                _config = nullptr;
-
 #ifndef __WINDOWS__
-                if (_background) {
-                    syslog(LOG_NOTICE, EXPAND_AND_QUOTE(APPLICATION_NAME) " Daemon closed down.");
-                } else
+            if (_background) {
+                syslog(LOG_NOTICE, EXPAND_AND_QUOTE(APPLICATION_NAME) " Daemon closing down.");
+            } else
 #endif
-                {
-                   fprintf(stdout, EXPAND_AND_QUOTE(APPLICATION_NAME) " closed down.\n");
-                }
-
-#ifndef __WINDOWS__
-                closelog();
-#endif
-
-                // Do not forget to close the Tracing stuff...
-                Trace::TraceUnit::Instance().Close();
-
-#ifdef __CORE_WARNING_REPORTING__
-        WarningReporting::WarningReportingUnit::Instance().Close();
-#endif
-
-                // Now clear all singeltons we created.
-                Core::Singleton::Dispose();
+            {
+                fprintf(stdout, EXPAND_AND_QUOTE(APPLICATION_NAME) " closing down.\n");
+                fflush(stderr);
             }
 
-            TRACE_L1("Leaving @Exit. Cleaning up process: %d.", Core::ProcessInfo().Id());
+            destructor->Close();
+            delete destructor;
+            delete _config;
+            _config = nullptr;
+
+
+#ifndef __WINDOWS__
+            closelog();
+#endif
+
+            Messaging::MessageUnit::Instance().Close();
+
+#ifndef __WINDOWS__
+            if (_background) {
+                syslog(LOG_NOTICE, EXPAND_AND_QUOTE(APPLICATION_NAME) " closing all created singletons.");
+            } else
+#endif
+            {
+                fprintf(stdout, EXPAND_AND_QUOTE(APPLICATION_NAME) " closing all created singletons.\n");
+                fflush(stderr);
+            }
+
+
+            // Now clear all singeltons we created.
+            Core::Singleton::Dispose();
+
+#ifndef __WINDOWS__
+            if (_background) {
+                syslog(LOG_NOTICE, EXPAND_AND_QUOTE(APPLICATION_NAME) " completely stopped.");
+            } else
+#endif
+            {
+                fprintf(stdout, EXPAND_AND_QUOTE(APPLICATION_NAME) " completely stopped.\n");
+                fflush(stderr);
+            }
+
+            _atExitActive = false;
+
+            exit(0);
         }
-        private:
-            static ExitHandler* _instance;
-            static Core::CriticalSection _adminLock;
+
+    private:
+        PluginHost::Server* _destructor;
+
+        static ExitHandler* _instance;
+        static Core::CriticalSection _adminLock;
     };
 
     ExitHandler* ExitHandler::_instance = nullptr;
     Core::CriticalSection ExitHandler::_adminLock;
+    
+    #ifndef __WINDOWS__
+    struct sigaction _originalSegmentationHandler;
+    struct sigaction _originalAbortHandler;
+    #endif
+
+    static string GetDeviceId(PluginHost::Server* dispatcher)
+    {
+        string deviceId;
+
+        PluginHost::ISubSystem* subSystems = dispatcher->Services().SubSystemsInterface();
+        if (subSystems != nullptr) {
+            if (subSystems->IsActive(PluginHost::ISubSystem::IDENTIFIER) == true) {
+                const PluginHost::ISubSystem::IIdentifier* id(subSystems->Get<PluginHost::ISubSystem::IIdentifier>());
+                if (id != nullptr) {
+                    uint8_t buffer[64];
+
+                    buffer[0] = static_cast<const PluginHost::ISubSystem::IIdentifier*>(id)
+                                ->Identifier(sizeof(buffer) - 1, &(buffer[1]));
+
+                    if (buffer[0] != 0) {
+                        deviceId = Core::SystemInfo::Instance().Id(buffer, ~0);
+                    }
+
+                    id->Release();
+                }
+            }
+            subSystems->Release();
+        }
+        return deviceId;
+    }
 
     extern "C" {
 
@@ -232,15 +311,38 @@ namespace PluginHost {
         }
 
         if ((signo == SIGTERM) || (signo == SIGQUIT)) {
-            ExitHandler::Construct();
+
+            if (_background) {
+                syslog(LOG_NOTICE, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to a SIGTERM or SIGQUIT signal. Regular shutdown");
+            } else {
+                fprintf(stderr, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to a SIGTERM or SIGQUIT signal. No regular shutdown.\nErrors to follow are collateral damage errors !!!!!!\n");
+                fflush(stderr);
+            }
+
+            ExitHandler::StartShutdown();
         }
-    }
-    // Workaround solution: OCDM plugin supports blacklist feature that uses regex.
-    // That prevents unloading of OCDM shared lib from memory after de-activation.
-    // Following is the workaround solution although it is not being called anywhere.
-    void RegexInit()
-    {
-        std::regex_match(std::string(""), std::regex(""));
+        else if ( (signo == SIGSEGV)  || (signo == SIGABRT) ) {
+
+            // From here on we do the best we can do. Have no clue what failed, try to log as much as possible and on
+            // a subsequent segmentation fault, just handle it the old fashion way. The root cause has been logged
+            // by than!
+            sigaction(SIGSEGV, &_originalSegmentationHandler, nullptr);
+            sigaction(SIGABRT, &_originalAbortHandler, nullptr);
+
+            ExitHandler::DumpMetadata();
+
+            if (_background) {
+                syslog(LOG_NOTICE, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to a segmentation fault. All relevant data dumped");
+            } else {
+                fprintf(stderr, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to a segmentation fault. All relevant data dumped\n");
+                fflush(stderr);
+            }
+
+            raise(signo);
+        }
+        else if (signo == SIGUSR1) {
+            ExitHandler::DumpMetadata();
+        }
     }
 
 #endif
@@ -299,8 +401,111 @@ namespace PluginHost {
     }
 #endif
 
+    static void ForcedExit() {
+        if (_atExitActive == true) {
+#ifndef __WINDOWS__
+            if (_background) {
+                syslog(LOG_ERR, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to an atexit request. No regular shutdown. Errors to follow are collateral damage errors !!!!!!");
+            } else 
+#endif
+            {
+                fprintf(stderr, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to an atexit request.\nNo regular shutdown.\nErrors to follow are collateral damage errors !!!!!!\n");
+                fflush(stderr);
+            }
+            ExitHandler::Destruct();
+        }
+    }
+
     static void UncaughtExceptions () {
+#ifndef __WINDOWS__
+        if (_background) {
+            syslog(LOG_ERR, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to an uncaught exception. No regular shutdown. Errors to follow are collateral damage errors !!!!!!");
+        } else
+#endif
+        {
+            fprintf(stderr, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to an uncaught exception.\nNo regular shutdown.\nErrors to follow are collateral damage errors !!!!!!\n");
+            fflush(stderr);
+        }
+
         Logging::DumpException(_T("General"));
+
+        ExitHandler::Destruct();
+    }
+
+    void MessagingInitialization(const string& pathName, const Messaging::MessageUnit::flush flushMode) {
+        string messagingSettings;
+
+        if (_config->MessagingCategoriesFile()) {
+
+            string messagingCategories = _config->MessagingCategories();
+
+            if (Core::File::IsPathAbsolute(messagingCategories)) {
+                messagingSettings = messagingCategories;
+            }
+            else {
+                messagingSettings = Core::Directory::Normalize(Core::File::PathName(pathName)) + messagingCategories;
+            }
+
+            std::ifstream inputFile (messagingSettings, std::ifstream::in);
+            std::stringstream buffer;
+            buffer << inputFile.rdbuf();
+            messagingSettings = buffer.str();
+        }
+        else {
+            messagingSettings = _config->MessagingCategories();
+        }
+
+        Messaging::MessageUnit::Settings::Config jsonParsed;
+        jsonParsed.FromString(messagingSettings);
+
+        // Time to open up, the message buffer for this process and define it for the out-of-proccess systems
+        // Define the environment variable for Messaging files, if it is not already set.
+        uint32_t messagingErrorCode = Messaging::MessageUnit::Instance().Open(_config->VolatilePath(), jsonParsed, _background, flushMode);
+
+        if ( messagingErrorCode != Core::ERROR_NONE){
+        #ifndef __WINDOWS__
+            if (_background == true) {
+                syslog(LOG_WARNING, EXPAND_AND_QUOTE(APPLICATION_NAME) " Could not enable messaging/tracing functionality!");
+            } else
+        #endif
+            {
+                fprintf(stdout, "Could not enable messaging/tracing functionality!\n");
+            }
+        }
+        else {
+            #ifdef __CORE_WARNING_REPORTING__
+            class GlobalConfig : public Core::JSON::Container {
+            public:
+                class ReportingSettings : public Core::JSON::Container {
+                public:
+                    ReportingSettings()
+                        : Core::JSON::Container()
+                        , Settings()
+                    {
+                        Add("settings", &Settings);
+                    }
+
+                public:
+                    Core::JSON::String Settings;
+                };
+
+            public:
+                GlobalConfig()
+                    : Core::JSON::Container()
+                    , WarningReporting()
+                {
+                    Add("reporting", &WarningReporting);
+                }
+
+             public:
+                ReportingSettings WarningReporting;
+            } gc;
+
+            gc.FromString(messagingSettings);
+
+            WarningReporting::WarningReportingUnit::Instance().Defaults(gc.WarningReporting.Settings.Value());
+            #endif
+        }
     }
 
 #ifdef __WINDOWS__
@@ -319,21 +524,18 @@ namespace PluginHost {
 
         ConsoleOptions options(argc, argv);
 
-        if (atexit(ExitHandler::Destruct) != 0) {
-            TRACE_L1("Could not register @exit handler. Argc %d.", argc);
-            ExitHandler::Destruct();
-            exit(EXIT_FAILURE);
-        } else if (options.RequestUsage()) {
+        if (options.RequestUsage()) {
 #ifndef __WINDOWS__
             syslog(LOG_ERR, EXPAND_AND_QUOTE(APPLICATION_NAME) " Daemon failed to start. Incorrect Options.");
 #endif
             if ((_background == false) && (options.RequestUsage())) {
-                fprintf(stderr, "Usage: " EXPAND_AND_QUOTE(APPLICATION_NAME) " [-c <config file>] -b\n");
+                fprintf(stderr, "Usage: " EXPAND_AND_QUOTE(APPLICATION_NAME) " [-c <config file>] [-b] [-fF]\n");
                 fprintf(stderr, "       -c <config file>  Define the configuration file to use.\n");
                 fprintf(stderr, "       -b                Run " EXPAND_AND_QUOTE(APPLICATION_NAME) " in the background.\n");
+                fprintf(stderr, "       -f                Flush messaging information also to syslog/console, none abbreviated\n");
+                fprintf(stderr, "       -F                Flush messaging information also to syslog/console, abbreviated\n");
             }
             exit(EXIT_FAILURE);
-            ;
         }
 #ifndef __WINDOWS__
         else {
@@ -346,7 +548,16 @@ namespace PluginHost {
             sigaction(SIGINT, &sa, nullptr);
             sigaction(SIGTERM, &sa, nullptr);
             sigaction(SIGQUIT, &sa, nullptr);
+            sigaction(SIGUSR1, &sa, nullptr);
+            sigaction(SIGSEGV, &sa, &_originalSegmentationHandler);
+            sigaction(SIGABRT, &sa, &_originalAbortHandler);
         }
+
+        if (atexit(ForcedExit) != 0) {
+            TRACE_L1("Could not register @exit handler. Argc %d.", argc);
+            ExitHandler::Destruct();
+            exit(EXIT_FAILURE);
+        } 
 
         if (_background == true) {
             //Close Standard File Descriptors
@@ -358,8 +569,6 @@ namespace PluginHost {
 #endif
 
         std::set_terminate(UncaughtExceptions);
-
-        Logging::SysLog(!_background);
 
         // Read the config file, to instantiate the proper plugins and for us to open up the right listening ear.
         Core::File configFile(string(options.configFile));
@@ -397,19 +606,22 @@ namespace PluginHost {
                 if (_config->Process().Priority() != 0) {
                     myself.Priority(_config->Process().Priority());
                 }
-                if (_config->Process().User().empty() == false) {
-                    myself.User(_config->Process().User());
-                }
+
                 if (_config->Process().Group().empty() == false) {
                     myself.Group(_config->Process().Group());
                 }
+
+                if (_config->Process().User().empty() == false) {
+                    myself.User(_config->Process().User());
+                }
+
                 if (_config->StackSize() != 0) {
                     Core::Thread::DefaultStackSize(_config->StackSize()); 
                 }
 
 #ifndef __WINDOWS__
-                if (_config->Process().UMask() != 0) {
-                    ::umask(_config->Process().UMask());
+                if (_config->Process().UMask().IsSet() == true) {
+                    ::umask(_config->Process().UMask().Value());
                 }
 #endif
                 myself.Policy(_config->Process().Policy());
@@ -426,64 +638,26 @@ namespace PluginHost {
                 pluginPath = Core::Directory::Normalize(pluginPath);
             }
 
-            string traceSettings (options.configFile);
- 
             // Create PostMortem path
             Core::Directory postMortemPath(_config->PostMortemPath().c_str());
             if (postMortemPath.Next() != true) {
                 postMortemPath.CreatePath();
             }
 
-            // Time to open up, the trace buffer for this process and define it for the out-of-proccess systems
-            // Define the environment variable for Tracing files, if it is not already set.
-            if ( Trace::TraceUnit::Instance().Open(_config->VolatilePath()) != Core::ERROR_NONE){
-#ifndef __WINDOWS__
-                if (_background == true) {
-                    syslog(LOG_WARNING, EXPAND_AND_QUOTE(APPLICATION_NAME) " Could not enable trace functionality!");
-                } else
-#endif
-                {
-                    fprintf(stdout, "Could not enable trace functionality!\n");
-                }
-            }
-
-            if (_config->TraceCategoriesFile() == true) {
-
-                traceSettings = Core::Directory::Normalize(Core::File::PathName(options.configFile)) + _config->TraceCategories();
-
-                Core::File input (traceSettings);
-
-                if (input.Open(true)) {
-                    Trace::TraceUnit::Instance().Defaults(input);
-                }
-            }
-            else {
-                Trace::TraceUnit::Instance().Defaults(_config->TraceCategories());
-            }
-
-#ifdef __CORE_WARNING_REPORTING__
-            if ( WarningReporting::WarningReportingUnit::Instance().Open(_config->VolatilePath()) != Core::ERROR_NONE){
-#ifndef __WINDOWS__
-                if (_background == true) {
-                    syslog(LOG_WARNING, EXPAND_AND_QUOTE(APPLICATION_NAME) " Could not enable issue reporting functionality!");
-                } else
-#endif
-                {
-                    fprintf(stdout, "Could not enable issue reporting functionality!\n");
-                }
-            }
-
-            WarningReporting::WarningReportingUnit::Instance().Defaults(_config->WarningReportingCategories()); 
-#endif
+            MessagingInitialization(options.configFile, options.flushMode);
 
             SYSLOG(Logging::Startup, (_T(EXPAND_AND_QUOTE(APPLICATION_NAME))));
             SYSLOG(Logging::Startup, (_T("Starting time: %s"), Core::Time::Now().ToRFC1123(false).c_str()));
             SYSLOG(Logging::Startup, (_T("Process Id:    %d"), Core::ProcessInfo().Id()));
-            SYSLOG(Logging::Startup, (_T("SystemId:      %s"), Core::SystemInfo::Instance().Id(Core::SystemInfo::Instance().RawDeviceId(), ~0).c_str()));
             SYSLOG(Logging::Startup, (_T("Tree ref:      " _T(EXPAND_AND_QUOTE(TREE_REFERENCE)))));
             SYSLOG(Logging::Startup, (_T("Build ref:     " _T(EXPAND_AND_QUOTE(BUILD_REFERENCE)))));
-            SYSLOG(Logging::Startup, (_T("Version:       %s"), _config->Version().c_str()));
-            SYSLOG(Logging::Startup, (_T("Traces:        %s"), traceSettings.c_str()));
+            SYSLOG(Logging::Startup, (_T("Version:       %d:%d:%d"), PluginHost::Major, PluginHost::Minor, PluginHost::Minor));
+            if (_config->MessagingCategoriesFile() == false) {
+                SYSLOG(Logging::Startup, (_T("Messages [INT]:  %s"), options.configFile));
+            }
+            else {
+                SYSLOG(Logging::Startup, (_T("Messages [EXT]:  %s"), _config->MessagingCategories().c_str()));
+            }
 
             // Before we do any translation of IP, make sure we have the right network info...
             if (_config->IPv6() == false) {
@@ -507,6 +681,11 @@ namespace PluginHost {
             // If we have handlers open up the gates to analyze...
             _dispatcher->Open();
 
+            string id = GetDeviceId(_dispatcher);
+            if (id.empty() == false) {
+                SYSLOG(Logging::Startup, (_T("SystemId:      %s"), id.c_str()));
+            }
+
 #ifndef __WINDOWS__
             if (_background == true) {
                 Core::WorkerPool::Instance().Join();
@@ -519,10 +698,50 @@ namespace PluginHost {
                     keyPress = toupper(getchar());
 
                     switch (keyPress) {
+                    case 'A': {
+                        Core::JSON::ArrayType<Metadata::COMRPC> proxyChannels;
+                        RPC::Administrator::Instance().Visit([&](const Core::IPCChannel& channel, const RPC::Administrator::Proxies& proxies) {
+                                Metadata::COMRPC& entry(proxyChannels.Add());
+                                const RPC::Communicator::Client* comchannel = dynamic_cast<const RPC::Communicator::Client*>(&channel);
+
+                                if (comchannel != nullptr) {
+                                    string identifier = PluginHost::ChannelIdentifier(comchannel->Source());
+
+                                    if (identifier.empty() == false) {
+                                        entry.Remote = identifier;
+                                    }
+                                }
+
+                                for (const auto& proxy : proxies) {
+                                    Metadata::COMRPC::Proxy& info(entry.Proxies.Add());
+                                    info.Instance = proxy->Implementation();
+                                    info.Interface = proxy->InterfaceId();
+                                    info.Count = proxy->ReferenceCount();
+                                }
+                            }
+                        );
+                        Core::JSON::ArrayType<Metadata::COMRPC>::Iterator index(proxyChannels.Elements());
+
+                        printf("COMRPC Links:\n");
+                        printf("============================================================\n");
+                        while (index.Next() == true) {
+                            printf("Link: %s\n", index.Current().Remote.Value().c_str());
+                            printf("------------------------------------------------------------\n");
+
+                            Core::JSON::ArrayType<Metadata::COMRPC::Proxy>::Iterator loop(index.Current().Proxies.Elements());
+
+                            while (loop.Next() == true) {
+                                uint64_t instanceId = loop.Current().Instance.Value();
+                                printf("InstanceId: 0x%" PRIx64 ", RefCount: %d, InterfaceId %d [0x%X]\n", instanceId, loop.Current().Count.Value(), loop.Current().Interface.Value(), loop.Current().Interface.Value());
+                            }
+                            printf("\n");
+                        }
+                        break;
+                    }
                     case 'C': {
-                        Core::JSON::ArrayType<MetaData::Channel> metaData;
-                        _dispatcher->Dispatcher().GetMetaData(metaData);
-                        Core::JSON::ArrayType<MetaData::Channel>::Iterator index(metaData.Elements());
+                        Core::JSON::ArrayType<Metadata::Channel> metaData;
+                        _dispatcher->Metadata(metaData);
+                        Core::JSON::ArrayType<Metadata::Channel>::Iterator index(metaData.Elements());
 
                         printf("\nChannels:\n");
                         printf("============================================================\n");
@@ -535,10 +754,22 @@ namespace PluginHost {
                         }
                         break;
                     }
+                    case 'E': {
+                        uint32_t requests, responses, filebodies, jsonrequests;
+                        _dispatcher->Statistics(requests, responses, filebodies, jsonrequests);
+                        printf("\nProxyPool Elements:\n");
+                        printf("============================================================\n");
+                        printf("HTTP requests:    %d\n", requests);
+                        printf("HTTP responses:   %d\n", responses);
+                        printf("HTTP Files:       %d\n", filebodies);
+                        printf("JSONRPC messages: %d\n", jsonrequests);
+
+                        break;
+                    }
                     case 'P': {
-                        Core::JSON::ArrayType<MetaData::Service> metaData;
-                        _dispatcher->Services().GetMetaData(metaData);
-                        Core::JSON::ArrayType<MetaData::Service>::Iterator index(metaData.Elements());
+                        Core::JSON::ArrayType<Metadata::Service> metaData;
+                        _dispatcher->Services().GetMetadata(metaData);
+                        Core::JSON::ArrayType<Metadata::Service>::Iterator index(metaData.Elements());
 
                         printf("\nPlugins:\n");
                         printf("============================================================\n");
@@ -547,7 +778,7 @@ namespace PluginHost {
                             printf("State:      %s\n", index.Current().JSONState.Data().c_str());
                             printf("Locator:    %s\n", index.Current().Locator.Value().c_str());
                             printf("Classname:  %s\n", index.Current().ClassName.Value().c_str());
-                            printf("Autostart:  %s\n", (index.Current().AutoStart.Value() == true ? _T("true") : _T("false")));
+                            printf("StartMode:  %s\n", index.Current().StartMode.Data());
 #if THUNDER_RESTFULL_API
 
                             printf("Observers:  %d\n", index.Current().Observers.Value());
@@ -626,6 +857,9 @@ namespace PluginHost {
                             printf("Bluetooth:    %s\n",
                                 (status->IsActive(PluginHost::ISubSystem::BLUETOOTH) == true) ? "Available"
                                                                                               : "Unavailable");
+                            printf("Cryptography: %s\n",
+                                (status->IsActive(PluginHost::ISubSystem::CRYPTOGRAPHY) == true) ? "Available"
+                                                                                              : "Unavailable");
                             printf("------------------------------------------------------------\n");
                             if (status->IsActive(PluginHost::ISubSystem::INTERNET) == true) {
                                 printf("Network Type: %s\n",
@@ -666,13 +900,17 @@ namespace PluginHost {
                             printf("SystemState: UNKNOWN\n");
                             printf("------------------------------------------------------------\n");
                         }
-                        printf("Pending:     %d\n", metaData.Pending);
-                        printf("Occupation:  %d\n", metaData.Occupation);
+                        printf("Pending:     %d\n", static_cast<uint32_t>(metaData.Pending.size()));
                         printf("Poolruns:\n");
                         for (uint8_t index = 0; index < metaData.Slots; index++) {
-                            printf("  Thread%02d:  %d\n", (index + 1), metaData.Slot[index]);
+                           printf("  Thread%02d|0x%16lX: %10d", (index), metaData.Slot[index].WorkerId, metaData.Slot[index].Runs);
+                            if (metaData.Slot[index].Job.IsSet() == false) {
+                                printf("\n");
+                            }
+                            else {
+                                printf(" [%s]\n", metaData.Slot[index].Job.Value().c_str());
+                            }
                         }
-                        status->Release();
                         break;
                     }
                     case 'T': {
@@ -730,10 +968,18 @@ namespace PluginHost {
                     case 'R': {
                         printf("\nMonitor callstack:\n");
                         printf("============================================================\n");
-                        std::list<string> stackList;
+                        uint8_t counter = 0;
+                        std::list<Core::callstack_info> stackList;
                         ::DumpCallStack(Core::ResourceMonitor::Instance().Id(), stackList);
-                        for (const string& entry : stackList) {
-                            printf("%s\n", entry.c_str());
+                        for (const Core::callstack_info& entry : stackList) {
+                            printf("[%03d] [%p] %.30s %s", counter, entry.address, entry.module.c_str(), entry.function.c_str());
+                            if (entry.line != static_cast<uint32_t>(~0)) {
+                                    printf(" [%d]\n", entry.line);
+                            }
+                            else {
+                                    printf("\n");
+                            }
+                            counter++;
                         }
                         break;
                     }
@@ -751,26 +997,36 @@ namespace PluginHost {
                         printf("\nThreadPool thread[%c] callstack:\n", keyPress);
                         printf("============================================================\n");
                         if (threadId != (ThreadId)(~0)) {
-                            std::list<string> stackList;
+                            uint8_t counter = 0;
+                            std::list<Core::callstack_info> stackList;
                             ::DumpCallStack(threadId, stackList);
-                            for (const string& entry : stackList) {
-                                printf("%s\n", entry.c_str());
+                            for (const Core::callstack_info& entry : stackList) {
+                                printf("[%03d] [%p] %.30s %s", counter, entry.address, entry.module.c_str(), entry.function.c_str());
+                                if (entry.line != static_cast<uint32_t>(~0)) {
+                                    printf(" [%d]\n", entry.line);
+                                }
+                                else {
+                                    printf("\n");
+                                }
+                                counter++;
                             }
                         } else {
-                           printf("The given Thread ID is not in a valid range, please give thread id between 0 and %d\n", THREADPOOL_COUNT);
+                           printf("The given Thread ID is not in a valid range, please give thread id between 0 and %d\n", THREADPOOL_COUNT + 1);
                         }
 
                         break;
                     }
                     case '?':
                         printf("\nOptions are: \n");
+                        printf("  [A]ctive Proxy list\n");
                         printf("  [P]lugins\n");
                         printf("  [C]hannels\n");
                         printf("  [S]erver stats\n");
+                        printf("  [E]lements in the ProxyPools\n");
                         printf("  [T]rigger resource monitor\n");
                         printf("  [M]etadata resource monitor\n");
                         printf("  [R]esource monitor stack\n");
-                        printf("  [0..%d] Workerpool stacks\n", THREADPOOL_COUNT);
+                        printf("  [0..%d] Threadpool stacks\n", THREADPOOL_COUNT + 1);
                         printf("  [Q]uit\n\n");
                         break;
 
@@ -782,8 +1038,14 @@ namespace PluginHost {
             }
         }
 
+        if (_background == false) {
+            fprintf(stderr, EXPAND_AND_QUOTE(APPLICATION_NAME) " shutting down due to a 'Q' press in the terminal. Regular shutdown\n");
+            fflush(stderr);
+        }
+ 
         ExitHandler::Destruct();
         std::set_terminate(nullptr);
+        _atExitActive = false;
         return 0;
 
     } // End main.

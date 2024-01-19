@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,15 +29,16 @@ namespace Tests {
     {
         // TODO: shouldn't this be done producer-side?
         char systemCmd[1024];
-        string command = "rm -f ";
-        snprintf(systemCmd, command.size()+bufferName.size()+1, "%s%s", command.c_str(),bufferName.c_str());
+        string command = "rm -rf ";
+        snprintf(systemCmd, command.size() + bufferName.size() + 1, "%s%s", command.c_str(), bufferName.c_str());
         system(systemCmd);
+
         string ext = ".admin";
-        snprintf(systemCmd, command.size()+bufferName.size()+ext.size()+1, "%s%s%s", command.c_str(),bufferName.c_str(),ext.c_str());
-        system(systemCmd);
+        snprintf(systemCmd, command.size() + bufferName.size() + ext.size() + 1, "%s%s%s", command.c_str(), bufferName.c_str(), ext.c_str());
+        system(const_cast<char*>(systemCmd));
     }
 
-    TEST(DISABLED_Core_SharedBuffer, simpleSet)
+    TEST(Core_SharedBuffer, simpleSet)
     {
         std::string bufferName {"testbuffer01"} ;
         auto lambdaFunc = [bufferName](IPTestAdministrator & testAdmin) {
@@ -52,9 +53,7 @@ namespace Tests {
                 Core::File::USER_WRITE   |
                 Core::File::USER_EXECUTE |
                 Core::File::GROUP_READ   |
-                Core::File::GROUP_WRITE  |
-                Core::File::OTHERS_READ  |
-                Core::File::OTHERS_WRITE,
+                Core::File::GROUP_WRITE  ,
                 bufferSize,
                 administrationSize);
             result = buff01.RequestProduce(Core::infinite);
@@ -109,7 +108,7 @@ namespace Tests {
 
         testAdmin.Sync("consumer done");
 
-//      Core::Singleton::Dispose(); TODO
+        Core::Singleton::Dispose();
     }
 
     TEST(Core_SharedBuffer, simpleSetReversed)
@@ -160,9 +159,7 @@ namespace Tests {
                 Core::File::USER_WRITE   |
                 Core::File::USER_EXECUTE |
                 Core::File::GROUP_READ   |
-                Core::File::GROUP_WRITE  |
-                Core::File::OTHERS_READ  |
-                Core::File::OTHERS_WRITE,
+                Core::File::GROUP_WRITE  ,
                 bufferSize,
                 administrationSize);
             result = buff01.RequestProduce(Core::infinite);
@@ -185,7 +182,8 @@ namespace Tests {
 
         testAdmin.Sync("producer done");
 
-//      Core::Singleton::Dispose(); TODO
+        CleanUpBuffer(bufferName);
+        Core::Singleton::Dispose();
     }
 } // Tests
 } // WPEFramework

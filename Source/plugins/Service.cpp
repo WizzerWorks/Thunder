@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ namespace PluginHost {
         ASSERT(_service.IsValid() == false);
         ASSERT(State() == INCOMPLETE);
 
-		uint8_t value = (serviceCall ? SERVICE_CALL : 0);
+        uint8_t value = (serviceCall ? SERVICE_CALL : 0);
 
         if (service.IsValid() == true) {
             _state = COMPLETE | value;
@@ -64,7 +64,7 @@ namespace PluginHost {
 
     /* static */ Core::ProxyType<Core::IDispatch> IShell::Job::Create(IShell* shell, IShell::state toState, IShell::reason why)
     {
-        return (Core::proxy_cast<Core::IDispatch>(Core::ProxyType<IShell::Job>::Create(shell, toState, why)));
+        return (Core::ProxyType<Core::IDispatch>(Core::ProxyType<IShell::Job>::Create(shell, toState, why)));
     }
 
 #if THUNDER_RESTFULL_API
@@ -86,13 +86,13 @@ namespace PluginHost {
     }
 #endif
 
-    void Service::FileToServe(const string& webServiceRequest, Web::Response& response)
+    void Service::FileToServe(const string& webServiceRequest, Web::Response& response, bool allowUnsafePath)
     {
         Web::MIMETypes result;
+        Web::EncodingTypes encoding = Web::ENCODING_UNKNOWN;
         uint16_t offset = static_cast<uint16_t>(_config.WebPrefix().length()) + (_webURLPath.empty() ? 1 : static_cast<uint16_t>(_webURLPath.length()) + 2);
         string fileToService = _webServerFilePath;
-
-        if ((webServiceRequest.length() <= offset) || (Web::MIMETypeForFile(webServiceRequest.substr(offset, -1), fileToService, result) == false)) {
+        if ((webServiceRequest.length() <= offset) || (Web::MIMETypeAndEncodingForFile(webServiceRequest.substr(offset, -1), fileToService, result, encoding) == false)) {
             Core::ProxyType<Web::FileBody> fileBody(IFactories::Instance().FileBody());
 
             // No filename gives, be default, we go for the index.html page..
@@ -100,10 +100,22 @@ namespace PluginHost {
             response.ContentType = Web::MIME_HTML;
             response.Body<Web::FileBody>(fileBody);
         } else {
-            Core::ProxyType<Web::FileBody> fileBody(IFactories::Instance().FileBody());
-            *fileBody = fileToService;
-            response.ContentType = result;
-            response.Body<Web::FileBody>(fileBody);
+            ASSERT(fileToService.length() >= _webServerFilePath.length());
+            bool safePath = true;
+            string normalizedPath = Core::File::Normalize(fileToService.substr(_webServerFilePath.length()), safePath);
+
+            if (allowUnsafePath || safePath ) {
+                Core::ProxyType<Web::FileBody> fileBody(IFactories::Instance().FileBody());
+                *fileBody = fileToService;
+                response.ContentType = result;
+                if (encoding != Web::ENCODING_UNKNOWN) {
+                    response.ContentEncoding = encoding;
+                }
+                response.Body<Web::FileBody>(fileBody);
+            } else {
+                response.ErrorCode = Web::STATUS_BAD_REQUEST;
+                response.Message = "Invalid Request";
+            }
         }
     }
 

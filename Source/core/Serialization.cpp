@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,7 @@
 
 namespace WPEFramework {
 namespace Core {
-#ifdef __WINDOWS__
-#pragma warning(disable : 4996)
-#endif
+PUSH_WARNING(DISABLE_WARNING_DEPRECATED_USE)
 
 #ifndef __CORE_NO_WCHAR_SUPPORT__
     void ToString(const wchar_t realString[], std::string& result)
@@ -156,48 +154,61 @@ namespace Core {
 #endif // _UNICODE
     }
 
-#ifdef __WINDOWS__
-#pragma warning(default : 4996)
-#endif
+POP_WARNING()
 
     static const TCHAR hex_chars[] = "0123456789abcdef";
 
-    void EXTERNAL ToHexString(const uint8_t object[], const uint16_t length, string& result)
+    void EXTERNAL ToHexString(const uint8_t object[], const uint32_t length, string& result, const TCHAR delimiter)
     {
         ASSERT(object != nullptr);
 
-        uint16_t index = static_cast<uint16_t>(result.length());
-        result.resize(index + (length * 2));
+        uint32_t index = static_cast<uint32_t>(result.length());
+        result.resize(index + (length * 2) + (delimiter == '\0' ? 0 : (length - 1)));
 
         result[1] = hex_chars[object[0] & 0xF];
 
-        for (uint16_t i = 0, j = index; i < length; i++) {
-            if ((object[i] == '\\') && ((i + 3) < length) && (object[i + 1] == 'x')) {
-                result[j++] = object[i + 2];
-                result[j++] = object[i + 3];
-                i += 3;
-            } else {
-                result[j++] = hex_chars[object[i] >> 4];
-                result[j++] = hex_chars[object[i] & 0xF];
+        for (uint32_t i = 0, j = index; i < length; i++) {
+            if ((delimiter != '\0') && (i > 0)) {
+                result[j++] = delimiter;
             }
+            result[j++] = hex_chars[object[i] >> 4];
+            result[j++] = hex_chars[object[i] & 0xF];
         }
     }
 
-    uint16_t EXTERNAL FromHexString(const string& hexString, uint8_t* object, const uint16_t maxLength) {
+    uint32_t EXTERNAL FromHexString(const string& hexString, uint8_t* object, const uint32_t maxLength, const TCHAR delimiter)
+    {
         ASSERT(object != nullptr || maxLength == 0); 
         uint8_t highNibble;
         uint8_t lowNibble;
-        uint16_t bufferIndex = 0, strIndex = 0;
+        uint32_t bufferIndex = 0, strIndex = 0;
 
         // assume first character is 0 if length is odd. 
-        if (hexString.length() % 2 == 1) {
+        if ((delimiter == '\0') && (hexString.length() % 2 == 1)) {
             lowNibble = FromHexDigits(hexString[strIndex++]);
             object[bufferIndex++] = lowNibble;
         }
 
         while ((bufferIndex < maxLength) && (strIndex < hexString.length())) {
-            highNibble = FromHexDigits(hexString[strIndex++]);
-            lowNibble = FromHexDigits(hexString[strIndex++]);
+            if (delimiter == '\0') {
+                highNibble = FromHexDigits(hexString[strIndex++]);
+                lowNibble = FromHexDigits(hexString[strIndex++]);
+            }
+            else {
+                uint8_t nibble = FromHexDigits(hexString[strIndex++]);
+                if (hexString[strIndex] == delimiter) {
+                    highNibble = 0;
+                    lowNibble = nibble;
+                    ++strIndex;
+                }
+                else {
+                    highNibble = nibble;
+                    lowNibble = FromHexDigits(hexString[strIndex++]);
+                    if (hexString[strIndex] == delimiter) {
+                        ++strIndex;
+                    }
+                }
+            }
 
             object[bufferIndex++] = (highNibble << 4) + lowNibble; 
         }
@@ -210,10 +221,10 @@ namespace Core {
                                         "abcdefghijklmnopqrstuvwxyz"
                                         "0123456789+/";
 
-    void ToString(const uint8_t object[], const uint16_t length, const bool padding, string& result)
+    void ToString(const uint8_t object[], const uint32_t length, const bool padding, string& result)
     {
         uint8_t state = 0;
-        uint16_t index = 0;
+        uint32_t index = 0;
         uint8_t lastStuff = 0;
 
         while (index < length) {
@@ -246,11 +257,11 @@ namespace Core {
         }
     }
 
-    uint16_t FromString(const string& newValue, uint8_t object[], uint16_t& length, const TCHAR* ignoreList)
+    uint32_t FromString(const string& newValue, uint8_t object[], uint32_t& length, const TCHAR* ignoreList)
     {
         uint8_t state = 0;
-        uint16_t index = 0;
-        uint16_t filler = 0;
+        uint32_t index = 0;
+        uint32_t filler = 0;
         uint8_t lastStuff = 0;
 
         while ((index < newValue.size()) && (filler < length)) {
@@ -294,5 +305,136 @@ namespace Core {
 
         return (index);
     }
+
+    uint16_t FromString(const string& newValue, uint8_t object[], uint16_t& length, const TCHAR* ignoreList)
+    {
+        uint32_t tempLength = length;
+        const uint16_t result = FromString(newValue, object, tempLength, ignoreList);
+        length = static_cast<uint16_t>(tempLength);
+        return (result);
+    }
+
+    bool CodePointToUTF16(const uint32_t codePoint, uint16_t& lowPart, uint16_t& highPart) {
+
+        bool translated = true;
+
+        // Do we need to adapt the CodePoint for UTF16 ?
+        if (codePoint <= 0xFFFF) {
+            // Nope no need to re-encode, just send as is..
+            lowPart = codePoint;
+            highPart = 0;
+        }
+        else {
+            // Yes it is bigger than 16 bits..
+            uint32_t adjustedCodePoint = codePoint - 0x10000;
+
+            // According to the specification the code point can not exceed 20 bits than..
+            if (adjustedCodePoint > 0xFFFFF) {
+                lowPart = 0x20; // It becomes a SPACE
+                highPart = 0x00;
+                translated = false;
+            }
+            else {
+                // Time to re-encode the HigPart and the LowPart..
+                lowPart = (adjustedCodePoint & 0x3FF) | 0xDC00;
+                highPart = ((adjustedCodePoint >> 10) & 0x3FF) | 0xD800;
+            }
+        }
+
+        return (translated);
+    }
+    bool UTF16ToCodePoint(const uint16_t lowPart, const uint16_t highPart, uint32_t& codePoint) {
+        bool translated = true;
+        if (highPart == 0) {
+            codePoint = lowPart;
+        }
+        else if (((lowPart & 0xFC00) == 0xDC00) && ((highPart & 0xFC00) == 0xD800)) {
+            codePoint = ((lowPart & 0x03FF) | ((highPart & 0x03FF) << 10)) + 0x10000;
+        }
+        else {
+            codePoint = 0x20; // It becomes a SPACE
+            translated = false;
+        }
+
+        return (translated);
+    }
+
+    int8_t ToCodePoint(const TCHAR* data, const uint8_t length,  uint32_t& codePoint) {
+
+        bool invalid = false;
+        #ifdef _UNICODE
+        static_assert(sizeof(TCHAR) != sizeof(char), "UTF16 to code point needs an implementation")
+        #else
+        uint32_t header = static_cast<uint16_t>(*data & 0xFF);
+        uint8_t following = (header < 0xC0 ? 0 :
+            header < 0xE0 ? 1 :
+            header < 0xF0 ? 2 :
+            header < 0xF8 ? 3 :
+            header < 0xFC ? 4 : 5);
+
+        // Get the bits of the indicator (ranges from 7 bits to 1)
+        if (following == 0) {
+            codePoint = header & 0x7F;
+        }
+        else {
+            codePoint = header & ((1 << (7 - following)) - 1);
+
+            // all right shit in the other bits..
+            for (uint8_t index = 1; (index <= following) && (index <= length); index++) {
+                codePoint = (codePoint << 6) | (data[index] & 0x3F);
+                invalid = invalid | ((data[index] & 0xC0) != 0x80);
+            }
+        }
+        #endif
+
+        return (invalid ? -(following + 1) : (following + 1));
+    }
+    int8_t FromCodePoint(uint32_t codePoint, TCHAR* data, const uint8_t length) {
+        #ifdef _UNICODE
+        static_assert(sizeof(TCHAR) != sizeof(char), "UTF16 to code point needs an implementation")
+        #else
+        uint8_t following = (codePoint <= 0x0000007F ? 0 :
+            codePoint <= 0x000007FF ? 1 :
+            codePoint <= 0x0000FFFF ? 2 :
+            codePoint <= 0x001FFFFF ? 3 :
+            codePoint <= 0x03FFFFFF ? 4 : 5);
+        uint32_t shifter = codePoint;
+
+        // Get the bits of the indicator (ranges from 7 bits to 1)
+        if (following == 0) {
+            *data = (codePoint & 0x7F);
+        }
+        else {
+            // Just start shiftin out all easy bits..
+            for (uint8_t index = following; index > 0; index--) {
+                if (index < length) {
+                    data[index] = (shifter & 0x3F) | 0x80;
+                }
+                shifter = shifter >> 6;
+            }
+
+            // Now contruct a proper preamble..
+            data[0] = (~((1 << (7 - following)) - 1)) | (shifter & 0x3F);
+        }
+        #endif
+
+        return (following + 1);
+    }
+
+    // If we are going to mark the length of a string by quotes, make 
+    // sure that the internal quotes are escaped...
+    string EXTERNAL ToQuotedString(const TCHAR quote, const string& input) {
+        string result;
+        result += quote;
+        for (auto entry : input) {
+            if (entry == quote) {
+                result += '\\';
+            }
+            result += entry;
+        }
+        result += quote;
+        return (result);
+    }
+
 }
 } // namespace Core

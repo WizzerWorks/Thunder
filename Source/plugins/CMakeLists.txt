@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,13 +16,27 @@
 # limitations under the License.
 
 set(TARGET ${NAMESPACE}Plugins)
+set(TARGET_PROXYSTUBS ${NAMESPACE}ProxyStubs)
+string(TOLOWER ${NAMESPACE} NAMESPACE_LIB)
 
 option(VIRTUALINPUT_TOOLS "Build VirtualInput tools" OFF)
+
+ProxyStubGenerator(NAMESPACE "WPEFramework::PluginHost" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/IPlugin.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+ProxyStubGenerator(NAMESPACE "WPEFramework::PluginHost" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/IShell.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+ProxyStubGenerator(NAMESPACE "WPEFramework::Exchange" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/IController.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated" INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/..")
+ProxyStubGenerator(NAMESPACE "WPEFramework::PluginHost" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/IStateControl.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+ProxyStubGenerator(NAMESPACE "WPEFramework::PluginHost" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/ISubSystem.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+ProxyStubGenerator(NAMESPACE "WPEFramework::PluginHost" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/IDispatcher.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+JsonGenerator(CODE NAMESPACE WPEFramework::Exchange::Controller INPUT ${CMAKE_CURRENT_SOURCE_DIR}/IController.h OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/json" INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/.." NO_INCLUDES)
+
+file(GLOB JSON_ENUM_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/json/JsonEnum_*.cpp")
+file(GLOB JSON_DATA_HEADERS "${CMAKE_CURRENT_BINARY_DIR}/json/JsonData_*.h" "${CMAKE_CURRENT_BINARY_DIR}/json/json_*.h")
 
 add_library(${TARGET} SHARED
         Channel.cpp
         JSONRPC.cpp
-        MetaData.cpp
+        Metadata.cpp
         Module.cpp
         Service.cpp
         Shell.cpp
@@ -30,6 +44,13 @@ add_library(${TARGET} SHARED
         SubSystem.cpp
         VirtualInput.cpp
         System.cpp
+        ${JSON_ENUM_SOURCES}
+        )
+
+file(GLOB PROXY_STUB_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/generated/ProxyStubs*.cpp")
+add_library(${TARGET_PROXYSTUBS} SHARED
+        ${PROXY_STUB_SOURCES}
+        Module.cpp
         )
 
 set(PUBLIC_HEADERS
@@ -38,10 +59,15 @@ set(PUBLIC_HEADERS
         Configuration.h
         IPlugin.h
         IShell.h
+        IController.h
+        Shell.h
         IStateControl.h
+        StateControl.h
         ISubSystem.h
+        IDispatcher.h
+        SubSystem.h
         JSONRPC.h
-        MetaData.h
+        Metadata.h
         plugins.h
         Request.h
         Service.h
@@ -53,26 +79,15 @@ set(PUBLIC_HEADERS
         )
 
 target_link_libraries(${TARGET}
-        PRIVATE
-          CompileSettingsDebug::CompileSettingsDebug
         PUBLIC
           ${NAMESPACE}Core::${NAMESPACE}Core
-          ${NAMESPACE}Tracing::${NAMESPACE}Tracing
           ${NAMESPACE}Cryptalgo::${NAMESPACE}Cryptalgo
+          ${NAMESPACE}Messaging::${NAMESPACE}Messaging
+          ${NAMESPACE}COM::${NAMESPACE}COM
+          ${NAMESPACE}WebSocket::${NAMESPACE}WebSocket
+        PRIVATE
+          CompileSettingsDebug::CompileSettingsDebug
         )
-
-if(PROTOCOLS)
-    target_link_libraries(${TARGET}
-            PUBLIC
-              ${NAMESPACE}Protocols::${NAMESPACE}Protocols
-            )
-else()
-    target_link_libraries(${TARGET}
-            PUBLIC
-              ${NAMESPACE}WebSocket::${NAMESPACE}WebSocket
-              ${NAMESPACE}COM::${NAMESPACE}COM
-            )
-endif()
 
 if (WARNING_REPORTING)
     target_link_libraries(${TARGET}
@@ -81,11 +96,28 @@ if (WARNING_REPORTING)
             )
 endif()
 
+# when compiling proxy/stubs we should ignore deprecated warnings (which are treated as erros nowadays) 
+# as usage of those deprecated methods is valid here
+target_compile_options(${TARGET_PROXYSTUBS} PRIVATE -Wno-deprecated-declarations)
+
+target_link_libraries(${TARGET_PROXYSTUBS}
+        PRIVATE
+          CompileSettingsDebug::CompileSettingsDebug
+          ${NAMESPACE}Core::${NAMESPACE}Core
+          ${NAMESPACE}COM::${NAMESPACE}COM
+        )
+
 target_include_directories( ${TARGET}
         PUBLIC
           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../>
+          $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../>
           $<INSTALL_INTERFACE:include/${NAMESPACE}>
+        )
+
+target_include_directories( ${TARGET_PROXYSTUBS}
+        PRIVATE
+          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../>
         )
 
 set_target_properties(${TARGET} PROPERTIES
@@ -93,6 +125,14 @@ set_target_properties(${TARGET} PROPERTIES
         CXX_STANDARD_REQUIRED YES
         FRAMEWORK FALSE
         PUBLIC_HEADER "${PUBLIC_HEADERS}" # specify the public headers
+        VERSION ${VERSION}
+        SOVERSION ${VERSION_MAJOR}
+        )
+
+set_target_properties(${TARGET_PROXYSTUBS} PROPERTIES
+        CXX_STANDARD 11
+        CXX_STANDARD_REQUIRED YES
+        FRAMEWORK FALSE
         VERSION ${VERSION}
         SOVERSION ${VERSION_MAJOR}
         )
@@ -110,6 +150,20 @@ install(
         INCLUDES DESTINATION include/${NAMESPACE}   # default include path
 )
 
+install(
+        FILES ${JSON_DATA_HEADERS} DESTINATION include/${NAMESPACE}/plugins/json COMPONENT devel # for mac
+)
+
+install(
+        TARGETS ${TARGET_PROXYSTUBS}  EXPORT ${TARGET_PROXYSTUBS}Targets        # for downstream dependencies
+        ARCHIVE DESTINATION lib/${NAMESPACE_LIB}/proxystubs COMPONENT libs      # static lib
+        LIBRARY DESTINATION lib/${NAMESPACE_LIB}/proxystubs COMPONENT libs      # shared lib
+        RUNTIME DESTINATION bin COMPONENT libs                                  # binaries
+        FRAMEWORK DESTINATION bin/${NAMESPACE_LIB}/proxystubs COMPONENT libs    # for mac
+        PUBLIC_HEADER DESTINATION include/${NAMESPACE}/proxystubs COMPONENT devel # for mac
+        INCLUDES DESTINATION include/${NAMESPACE}/proxystubs                    # headers
+)
+
 # ===========================================================================================
 # Install METADATA:
 # ===========================================================================================
@@ -118,4 +172,7 @@ InstallPackageConfig(
         DESCRIPTION "Basic library to realize the glue between a proprietary plugin and the framework host.")
 
 InstallCMakeConfig(
+        EXTRA_DEPENDENCIES "ConfigGenerator"
         TARGETS ${TARGET})
+
+InstallCMakeConfig(TARGETS ${TARGET_PROXYSTUBS})

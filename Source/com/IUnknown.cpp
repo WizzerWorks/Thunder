@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ namespace ProxyStub {
         Core::ProxyType<Core::IPCChannel>& channel,
         Core::ProxyType<RPC::InvokeMessage>& message)
     {
-        RPC::instance_id rawIdentifier(message->Parameters().Implementation());
+        Core::instance_id rawIdentifier(message->Parameters().Implementation());
 
         Core::IUnknown* implementation(Convert(reinterpret_cast<void*>(rawIdentifier)));
 
@@ -83,7 +83,7 @@ namespace ProxyStub {
                 uint32_t newInterfaceId(reader.Number<uint32_t>());
 
                 void* newInterface = implementation->QueryInterface(newInterfaceId);
-                response.Number<RPC::instance_id>(RPC::instance_cast<void*>(newInterface));
+                response.Number<Core::instance_id>(RPC::instance_cast<void*>(newInterface));
 
                 if (newInterface != nullptr) {
                     RPC::Administrator::Instance().RegisterInterface(channel, newInterface, newInterfaceId);

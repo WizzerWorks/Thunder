@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,18 +28,18 @@ include(CMakePackageConfigHelpers)
 #
 # Build type specific options
 #
-if("${BUILD_TYPE}" STREQUAL "Debug")
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR ${CMAKE_COMPILER_IS_GNUCXX} )
-        target_compile_options(CompileSettingsDebug INTERFACE -O0 -g -Wextra)
+        target_compile_options(CompileSettingsDebug INTERFACE -O0 -g)
     endif()
 
-elseif("${BUILD_TYPE}" STREQUAL "DebugOptimized")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DebugOptimized")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR ${CMAKE_COMPILER_IS_GNUCXX} )
-        target_compile_options(CompileSettingsDebug INTERFACE -O2 -g -Wextra)
+        target_compile_options(CompileSettingsDebug INTERFACE -O2 -g)
     endif()
 
-elseif("${BUILD_TYPE}" STREQUAL "ReleaseSymbols")
-    target_compile_options(CompileSettingsDebug INTERFACE "${CMAKE_C_FLAGS_DEBUG}" -Wextra)
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+    target_compile_options(CompileSettingsDebug INTERFACE "${CMAKE_C_FLAGS_DEBUG}")
 endif()
 
 install(TARGETS CompileSettingsDebug EXPORT CompileSettingsDebugTargets)

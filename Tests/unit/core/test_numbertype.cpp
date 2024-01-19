@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ namespace Tests {
     
     TEST(Core_NumberType, generic)
     {
-        Core::NumberType<uint8_t> numbertype();
+        Core::NumberType<uint8_t> numbertype;
         string buffer = "/Service/testing/numbertype";
         Core::NumberType<Core::TextFragment> typetextfragment(Core::TextFragment(string(buffer)));
 
@@ -230,7 +230,7 @@ namespace Tests {
 
     TEST(Core_NumberType, Fractional_test)
     {
-        Core::Fractional fractional();
+        Core::Fractional fractional;
         Core::Fractional fractional1(3,2);
         Core::Fractional fractional2(fractional1);
         Core::Fractional fractional3;

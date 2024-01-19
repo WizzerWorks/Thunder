@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,24 +33,92 @@ ENUM_CONVERSION_BEGIN(PluginHost::VirtualInput::KeyMap::modifier)
     { PluginHost::VirtualInput::KeyMap::LEFTCTRL, _TXT("leftctrl") },
     { PluginHost::VirtualInput::KeyMap::RIGHTCTRL, _TXT("rightctrl") },
 
-    ENUM_CONVERSION_END(PluginHost::VirtualInput::KeyMap::modifier)
+ENUM_CONVERSION_END(PluginHost::VirtualInput::KeyMap::modifier)
+
+namespace {
+    class InputEvent {
+    public:
+        InputEvent(InputEvent&&) = delete;
+        InputEvent(const InputEvent&) = delete;
+        InputEvent& operator=(const InputEvent&) = delete;
+
+        InputEvent(const IVirtualInput::KeyData& data) {
+            switch (data.Action) {
+            case IVirtualInput::KeyData::type::RELEASED:
+                _text = Core::ToString(Core::Format(_T("KeyData: RELEASED [0x%X]"), data.Code));
+                break;
+            case IVirtualInput::KeyData::type::PRESSED:
+                _text = Core::ToString(Core::Format(_T("KeyData: PRESSED [0x%X]"), data.Code));
+                break;
+            case IVirtualInput::KeyData::type::REPEAT:
+                _text = Core::ToString(Core::Format(_T("KeyData: REPEAT [0x%X]"), data.Code));
+                break;
+            case IVirtualInput::KeyData::type::COMPLETED:
+                _text = Core::ToString(Core::Format(_T("KeyData: COMPLETED [0x%X]"), data.Code));
+                break;
+            }
+        }
+        InputEvent(const IVirtualInput::MouseData& data) {
+            switch (data.Action) {
+            case IVirtualInput::MouseData::type::RELEASED:
+                _text = Core::ToString(Core::Format(_T("MouseData: RELEASED%d (x=%d,y=%d)"), data.Button, data.Horizontal, data.Vertical));
+                break;
+            case IVirtualInput::MouseData::type::PRESSED:
+                _text = Core::ToString(Core::Format(_T("MouseData: PRESSED%d (x=%d,y=%d)"), data.Button, data.Horizontal, data.Vertical));
+                break;
+            case IVirtualInput::MouseData::type::MOTION:
+                _text = Core::ToString(Core::Format(_T("MouseData: MOTION (x=%d,y=%d)"), data.Horizontal, data.Vertical));
+                break;
+            case IVirtualInput::MouseData::type::SCROLL:
+                _text = Core::ToString(Core::Format(_T("MouseData: SCROLL (x=%d,y=%d)"), data.Horizontal, data.Vertical));
+                break;
+            }
+        }
+        InputEvent(const IVirtualInput::TouchData& data) {
+            switch (data.Action) {
+            case IVirtualInput::TouchData::type::RELEASED:
+                _text = Core::ToString(Core::Format(_T("TouchData: RELEASED (index=%d,x=%d,y=%d)"), data.Index, data.X, data.Y));
+                break;
+            case IVirtualInput::TouchData::type::PRESSED:
+                _text = Core::ToString(Core::Format(_T("TouchData: PRESSED (index=%d,x=%d,y=%d)"), data.Index, data.X, data.Y));
+                break;
+            case IVirtualInput::TouchData::type::MOTION:
+                _text = Core::ToString(Core::Format(_T("TouchData: MOTION (index=%d,x=%d,y=%d)"), data.Index, data.X, data.Y));
+                break;
+            }
+        }
+        ~InputEvent() = default;
+
+    public:
+        const char* Data() const
+        {
+            return (_text.c_str());
+        }
+        uint16_t Length() const
+        {
+            return (static_cast<uint16_t>(_text.length()));
+        }
+
+    private:
+        std::string _text;
+    };
+}
 
 namespace PluginHost
 {
     /* static */ VirtualInput* InputHandler::_keyHandler;
 
-    uint32_t VirtualInput::KeyMap::Load(const string& keyMap)
+    uint32_t VirtualInput::KeyMap::Import(const Core::JSON::ArrayType<KeyMapEntry>& mappingTable)
     {
         uint32_t result = Core::ERROR_ILLEGAL_STATE;
 
-        if ((keyMap.empty() == false) && (Core::File(keyMap).Exists() == true)) {
-            result = Core::ERROR_OPENING_FAILED;
-
+        if(mappingTable.Length() > 0) {
             std::map<uint16_t, uint16_t> previousKeys;
             std::map<uint16_t, int16_t> updatedKeys;
 
-            while (_keyMap.size() > 0) {
+            result = Core::ERROR_NONE;
 
+            while (_keyMap.size() > 0) {
                 // Keep reference count of repeated keys
                 previousKeys[_keyMap.begin()->second.Code]++;
 
@@ -60,34 +128,20 @@ namespace PluginHost
                 _keyMap.erase(_keyMap.begin());
             }
 
-            Core::File mappingFile(keyMap);
-            Core::JSON::ArrayType<KeyMapEntry> mappingTable;
+            Core::JSON::ArrayType<KeyMapEntry>::ConstIterator index(mappingTable.Elements());
+            while (index.Next() == true) {
+                if ((index.Current().Code.IsSet()) && (index.Current().Key.IsSet())) {
+                    uint32_t code(index.Current().Code.Value());
+                    ConversionInfo conversionInfo;
 
-            if (mappingFile.Open(true) == true) {
-                result = Core::ERROR_NONE;
+                    conversionInfo.Code = index.Current().Key.Value();
+                    conversionInfo.Modifiers = 0;
 
-                Core::OptionalType<Core::JSON::Error> error;
-                mappingTable.IElement::FromFile(mappingFile, error);
-                if (error.IsSet() == true) {
-                    SYSLOG(Logging::ParsingError, (_T("Parsing failed with %s"), ErrorDisplayMessage(error.Value()).c_str()));
-                }
+                    // Build the device info array..
+                    Core::JSON::ArrayType<JSONModifier>::ConstIterator flags(index.Current().Modifiers.Elements());
 
-                // Build the device info array..
-                Core::JSON::ArrayType<KeyMapEntry>::Iterator index(mappingTable.Elements());
-
-                while (index.Next() == true) {
-                    if ((index.Current().Code.IsSet()) && (index.Current().Key.IsSet())) {
-                        uint32_t code(index.Current().Code.Value());
-                        ConversionInfo conversionInfo;
-
-                        conversionInfo.Code = index.Current().Key.Value();
-                        conversionInfo.Modifiers = 0;
-
-                        // Build the device info array..
-                        Core::JSON::ArrayType<JSONModifier>::Iterator flags(index.Current().Modifiers.Elements());
-
-                        while (flags.Next() == true) {
-                            switch (flags.Current().Value()) {
+                    while (flags.Next() == true) {
+                        switch (flags.Current().Value()) {
                             case KeyMap::modifier::LEFTSHIFT:
                             case KeyMap::modifier::RIGHTSHIFT:
                             case KeyMap::modifier::LEFTALT:
@@ -99,101 +153,82 @@ namespace PluginHost
                             default:
                                 ASSERT(false);
                                 break;
-                            }
                         }
+                    }
 
-                        // Do not allow same device code to point multiple input keys, it is not a real use-case
-                        if (_keyMap.find(code) == _keyMap.end()) {
+                    // Do not allow same device code to point multiple input keys, it is not a real use-case
+                    if (_keyMap.find(code) == _keyMap.end()) {
+                        _keyMap.insert(std::pair<const uint32_t, const ConversionInfo>(code, conversionInfo));
 
-                            _keyMap.insert(std::pair<const uint32_t, const ConversionInfo>(code, conversionInfo));
+                        std::map<uint16_t, uint16_t>::iterator index = previousKeys.find(conversionInfo.Code);
 
-                            std::map<uint16_t, uint16_t>::iterator index = previousKeys.find(conversionInfo.Code);
-
-                            if (index != previousKeys.end()) {
-                                updatedKeys[index->first]++;
-                            } else {
-                                updatedKeys[conversionInfo.Code]++;
-                            }
+                        if (index != previousKeys.end()) {
+                            updatedKeys[index->first]++;
+                        } else {
+                            updatedKeys[conversionInfo.Code]++;
                         }
                     }
                 }
-
-                std::map<uint16_t, uint16_t>::const_iterator updatedKey(previousKeys.begin());
-
-                while (updatedKey != previousKeys.end()) {
-
-                    // Get differences with the latest key map and create delta list
-                    updatedKeys[updatedKey->first] -= previousKeys[updatedKey->first];
-                    updatedKey++;
-                }
-
-                ChangeIterator updated(updatedKeys);
-                _parent.MapChanges(updated);
             }
+
+            std::map<uint16_t, uint16_t>::const_iterator updatedKey(previousKeys.begin());
+
+            while (updatedKey != previousKeys.end()) {
+                // Get differences with the latest key map and create delta list
+                updatedKeys[updatedKey->first] -= previousKeys[updatedKey->first];
+                updatedKey++;
+            }
+
+            ChangeIterator updated(updatedKeys);
+            _parent.MapChanges(updated);
         }
 
         return (result);
     }
 
-    uint32_t VirtualInput::KeyMap::Save(const string& keyMap)
+    void VirtualInput::KeyMap::Export(Core::JSON::ArrayType<KeyMapEntry>& mappingTable)
     {
-        uint32_t result = Core::ERROR_ILLEGAL_STATE;
+        std::map<const uint32_t, const ConversionInfo>::const_iterator index(_keyMap.begin());
 
-        Core::File mappingFile(keyMap);
-        Core::JSON::ArrayType<KeyMapEntry> mappingTable;
+        while (index != _keyMap.end()) {
 
-        if (mappingFile.Create() == true) {
-            mappingFile.SetSize(0);
+            KeyMapEntry element;
+            element.Code = index->first;
+            element.Key = index->second.Code;
 
-            result = Core::ERROR_NONE;
+            uint16_t flag(1);
+            uint16_t modifiers(index->second.Modifiers);
 
-            std::map<const uint32_t, const ConversionInfo>::const_iterator index(_keyMap.begin());
+            while (modifiers != 0) {
 
-            while (index != _keyMap.end()) {
-
-                KeyMapEntry element;
-                element.Code = index->first;
-                element.Key = index->second.Code;
-
-                uint16_t flag(1);
-                uint16_t modifiers(index->second.Modifiers);
-
-                while (modifiers != 0) {
-
-                    if ((modifiers & 0x01) != 0) {
-                        switch (flag) {
-                        case KeyMap::modifier::LEFTSHIFT:
-                        case KeyMap::modifier::RIGHTSHIFT:
-                        case KeyMap::modifier::LEFTALT:
-                        case KeyMap::modifier::RIGHTALT:
-                        case KeyMap::modifier::LEFTCTRL:
-                        case KeyMap::modifier::RIGHTCTRL: {
-                            JSONModifier& jsonRef = element.Modifiers.Add();
-                            jsonRef = static_cast<KeyMap::modifier>(flag);
-                            break;
-                        }
-                        default:
-                            ASSERT(false);
-                            break;
-                        }
+                if ((modifiers & 0x01) != 0) {
+                    switch (flag) {
+                    case KeyMap::modifier::LEFTSHIFT:
+                    case KeyMap::modifier::RIGHTSHIFT:
+                    case KeyMap::modifier::LEFTALT:
+                    case KeyMap::modifier::RIGHTALT:
+                    case KeyMap::modifier::LEFTCTRL:
+                    case KeyMap::modifier::RIGHTCTRL: {
+                        JSONModifier& jsonRef = element.Modifiers.Add();
+                        jsonRef = static_cast<KeyMap::modifier>(flag);
+                        break;
                     }
-
-                    flag = flag << 1;
-                    modifiers = modifiers >> 1;
+                    default:
+                        ASSERT(false);
+                        break;
+                    }
                 }
 
-                mappingTable.Add(element);
-                index++;
+                flag = flag << 1;
+                modifiers = modifiers >> 1;
             }
-            mappingTable.IElement::ToFile(mappingFile);
-        }
 
-        return (result);
+            mappingTable.Add(element);
+            index++;
+        }
     }
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     VirtualInput::VirtualInput()
         : _lock()
         , _repeatKey(this)
@@ -211,9 +246,7 @@ namespace PluginHost
         _repeatKey.AddRef();
         _repeatKey.AddReference();
     }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
     VirtualInput::~VirtualInput()
     {
@@ -336,7 +369,7 @@ namespace PluginHost
     {
         IVirtualInput::TouchData event;
         event.Action = (state == 0 ? IVirtualInput::TouchData::MOTION: 
-                       (state == 1 ? IVirtualInput::TouchData::PRESSED : IVirtualInput::TouchData::RELEASED));
+                       (state == 1 ? IVirtualInput::TouchData::RELEASED : IVirtualInput::TouchData::PRESSED));
         event.Index = index;
         event.X = x;
         event.Y = y;
@@ -379,11 +412,12 @@ namespace PluginHost
                 sendCode = element->Code | (element->Modifiers << 16);
             }
 
-            if ((pressed == false) && (_pressedCode != sendCode)) {
+            // Modifiers can be pressed when there is a new press for another key.
+            if ((pressed == false) && (_pressedCode != sendCode) && !Modifier(sendCode)) {
                 result = Core::ERROR_ALREADY_RELEASED;
             }
             else if (sendCode != static_cast<uint32_t>(~0)) {
-                if ( (pressed == true) && (_pressedCode != static_cast<uint32_t>(~0)) ) {
+                if ( (pressed == true) && (_pressedCode != static_cast<uint32_t>(~0)) && !Modifier(_pressedCode)) {
                     DispatchRegisteredKey(IVirtualInput::KeyData::RELEASED, _pressedCode);
                 }
 
@@ -647,7 +681,10 @@ namespace PluginHost
                 });
 
                 // We are ready! Create that device!
-                (void)write(_eventDescriptor, &_uidev, sizeof(_uidev));
+                PUSH_WARNING(DISABLE_WARNING_UNUSED_RESULT);
+                write(_eventDescriptor, &_uidev, sizeof(_uidev));
+                POP_WARNING()
+
                 ioctl(_eventDescriptor, UI_DEV_CREATE);
             }
         }
@@ -669,7 +706,10 @@ namespace PluginHost
             ev.code  = ((data.Action == IVirtualInput::KeyData::COMPLETED) ? 0 : data.Code);
 
             TRACE_L1("Inserted a keycode: %d", data.Code);
-            (void)write(_eventDescriptor, &ev, sizeof(ev));
+
+            PUSH_WARNING(DISABLE_WARNING_UNUSED_RESULT);
+            write(_eventDescriptor, &ev, sizeof(ev));
+            POP_WARNING()
         }
     }
 
@@ -722,18 +762,14 @@ namespace PluginHost
 #endif
 
     // Keyboard input
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     IPCUserInput::IPCUserInput(const Core::NodeId& sourceName, const bool defaultEnabled)
         : _service(*this, sourceName)
         , _defaultEnabled(defaultEnabled)
     {
         TRACE_L1("Constructing IPCUserInput for %s on %s", sourceName.HostAddress().c_str(), sourceName.HostName().c_str());
     }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+POP_WARNING()
 
     /* virtual */ IPCUserInput::~IPCUserInput()
     {
@@ -743,45 +779,40 @@ namespace PluginHost
 
     /* virtual */ VirtualInput::Iterator IPCUserInput::Consumers() const
     {
-        uint16_t index = 0;
         std::list<string> container;
-        Core::ProxyType<const VirtualInputChannelServer::Client> client;
             
-        do {
-            client = _service[index];
-            index++;
-                
-            if (client.IsValid() == true) {
-                container.push_back(client->Extension().Name());
+        _service.Visit(
+            [ &container ](const VirtualInputChannelServer::Client& element)
+            {
+                string result = element.Extension().Name();
+                container.push_back(result);
             }
-        } while (client.IsValid() == true);
-            
+        );
+
         return (VirtualInput::Iterator(std::move(container)));
     }
 
     /* virtual */ bool IPCUserInput::Consumer(const string& name) const {
-        uint16_t index = 0;
-        Core::ProxyType<const VirtualInputChannelServer::Client> client;
-            
-        do {
-            client = _service[index];
-            index++;
-        } while ( (client.IsValid() == true) && (client->Extension().Name() != name) );
+        Core::ProxyType<const VirtualInputChannelServer::Client> result = _service.Find(
+            [name] (const VirtualInputChannelServer::Client& element)
+            {
+                return (element.Extension().Name() == name);
+            }
+        );
 
-        return (client.IsValid() ? client->Extension().Enable() : false); 
+        return(result.IsValid() && result->Extension().Enable());
     }
 
     /* virtual */ void IPCUserInput::Consumer(const string& name, const bool enabled) {
-        uint16_t index = 0;
-        Core::ProxyType<VirtualInputChannelServer::Client> client;
-            
-        do {
-            client = _service[index];
-            index++;
-        } while ( (client.IsValid() == true) && (client->Extension().Name() != name) );
+        Core::ProxyType<VirtualInputChannelServer::Client> result = _service.Find(
+            [name](const VirtualInputChannelServer::Client& element)
+            {
+                return (element.Extension().Name() == name);
+            }
+        );
 
-        if (client.IsValid() == true) {
-            client->Extension().Enable(enabled);
+        if (result.IsValid() == true) {
+            result->Extension().Enable(enabled);
         }
     }
 
@@ -801,7 +832,8 @@ namespace PluginHost
         static Core::ProxyType<IVirtualInput::KeyMessage> message(Core::ProxyType<IVirtualInput::KeyMessage>::Create());
 
         message->Parameters() = data;
-        Core::ProxyType<Core::IIPC> base(Core::proxy_cast<Core::IIPC>(message));
+        Core::ProxyType<Core::IIPC> base(message);
+        TRACE(InputEvent, (data));
         _service.Invoke(base, RPC::CommunicationTimeOut);
     }
 
@@ -810,7 +842,8 @@ namespace PluginHost
         static Core::ProxyType<IVirtualInput::MouseMessage> message(Core::ProxyType<IVirtualInput::MouseMessage>::Create());
 
         message->Parameters() = data;
-        Core::ProxyType<Core::IIPC> base(Core::proxy_cast<Core::IIPC>(message));
+        Core::ProxyType<Core::IIPC> base(message);
+        TRACE(InputEvent, (data));
         _service.Invoke(base, RPC::CommunicationTimeOut);
     }
 
@@ -819,7 +852,8 @@ namespace PluginHost
         static Core::ProxyType<IVirtualInput::TouchMessage> message(Core::ProxyType<IVirtualInput::TouchMessage>::Create());
 
         message->Parameters() = data;
-        Core::ProxyType<Core::IIPC> base(Core::proxy_cast<Core::IIPC>(message));
+        Core::ProxyType<Core::IIPC> base(message);
+        TRACE(InputEvent, (data));
         _service.Invoke(base, RPC::CommunicationTimeOut);
     }
 
@@ -827,15 +861,14 @@ namespace PluginHost
 
     /* virtual */ void IPCUserInput::LookupChanges(const string& linkName)
     {
-        uint16_t index = 0;
-        Core::ProxyType<VirtualInputChannelServer::Client> current(_service[index++]);
-
-        while (current.IsValid() == true) {
-            if (current->Extension().Name() == linkName) {
-                current->Extension().Reload();
+        _service.Visit(
+            [ linkName ](VirtualInputChannelServer::Client& element)
+            {
+                if (element.Extension().Name() == linkName) {
+                    element.Extension().Reload();
+                }
             }
-            current = Core::ProxyType<VirtualInputChannelServer::Client>(_service[index++]);
-        }
+        );
     }
 
 } // Namespace PluginHost

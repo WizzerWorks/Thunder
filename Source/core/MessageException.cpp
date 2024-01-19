@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,10 +24,8 @@
 
 namespace WPEFramework {
 namespace Core {
-#ifdef __WINDOWS__
-#pragma warning(disable : 4996)
-#endif
 
+PUSH_WARNING(DISABLE_WARNING_DEPRECATED_USE)
     MessageException::MessageException(const string& message, bool inclSysMsg) throw()
         : m_Message(message)
     {
@@ -36,10 +34,7 @@ namespace Core {
             m_Message.append(Core::ToString(strerror(errno)));
         }
     }
-
-#ifdef __WINDOWS__
-#pragma warning(default : 4996)
-#endif
+POP_WARNING()
 
     MessageException::~MessageException() throw()
     {

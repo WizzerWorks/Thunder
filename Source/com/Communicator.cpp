@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,175 +33,203 @@ namespace RPC {
 
     static Core::ProxyPoolType<RPC::AnnounceMessage> AnnounceMessageFactory(2);
 
-    /* static */ Core::CriticalSection Process::_ldLibLock ;
-
-    class ProcessShutdown {
-    public:
-        static constexpr uint32_t DestructionStackSize = 64 * 1024;
-
-        class IClosingInfo {
-        public:
-            virtual ~IClosingInfo() = default;
-
-            // Should return 0 if no more iterations are needed.
-            virtual uint32_t AttemptClose(const uint8_t iteration) = 0; 
-        };
+    class DynamicLoaderPaths {
+    private:
+        static constexpr TCHAR LoaderConfig[] = _T("/etc/ld.so.conf");
 
     public:
-        ProcessShutdown() = delete;
-        ProcessShutdown& operator=(const ProcessShutdown& RHS) = delete;
-        ProcessShutdown(const ProcessShutdown& copy) = delete;
+        DynamicLoaderPaths(const DynamicLoaderPaths&) = delete;
+        DynamicLoaderPaths& operator= (const DynamicLoaderPaths&) = delete;
 
-        ProcessShutdown(ProcessShutdown&& rhs)
-            : _handler(std::move(rhs._handler))
-            , _cycle(rhs._cycle)
+        DynamicLoaderPaths() 
+            : _downloadLists()
         {
+            ReadList(LoaderConfig, _downloadLists);
+            _downloadLists.emplace_back(_T("/usr/lib/"));
+            _downloadLists.emplace_back(_T("/lib/"));
+        }
+        ~DynamicLoaderPaths() = default;
+
+    public:
+        const std::vector<string>& Paths() const
+        {
+            return (_downloadLists);
         }
 
-        explicit ProcessShutdown(std::unique_ptr<IClosingInfo>&& handler)
-            : _handler(std::move(handler))
-            , _cycle(1)
+    private:
+        void ReadList(const string& filename, std::vector<string>& entries)
         {
+
+            string filter(Core::File::FileNameExtended(filename));
+
+            if (filter.find('*') != string::npos) {
+                Core::Directory dir(Core::File::PathName(filename).c_str(), filter.c_str());
+
+                while (dir.Next() == true) {
+                    ReadList(dir.Current(), entries);
+                }
+            }
+            else {
+                // Parse it line, by line...
+                Core::DataElementFile bufferFile(filename, Core::File::USER_READ);
+                Core::TextReader reader(bufferFile);
+
+                while (reader.EndOfText() == false) {
+                    Core::TextFragment line(reader.ReadLine());
+
+                    // Drop the spaces in the begining...
+                    line.TrimBegin(" \t");
+
+                    if ((line.IsEmpty() == false) && (line[0] != '#')) {
+                        Core::TextSegmentIterator segments(line, true, " \t");
+
+                        if (segments.Next() == true) {
+
+                            // Looks like we have a word, see what the word is...
+                            if ((segments.Current() == _T("include")) && (segments.Next() == true)) {
+                                // Oke, dive into this entry...
+                                ReadList(segments.Remainder().Text(), entries);
+                            }
+                            else {
+                                entries.emplace_back(line.Text());
+                            }
+                        }
+                        else {
+                            entries.emplace_back(line.Text());
+                        }
+                    }
+                }
+            }
+        }
+
+    private:
+        std::vector<string> _downloadLists;
+    };
+
+    /* static */ constexpr TCHAR DynamicLoaderPaths::LoaderConfig[];
+    static DynamicLoaderPaths& _LoaderPaths = Core::SingletonType<DynamicLoaderPaths>::Instance();
+
+    /* static */ Core::CriticalSection Communicator::Process::_ldLibLock ;
+
+    class ProcessShutdown : public Core::Thread {
+    private:
+        static constexpr uint32_t DestructionStackSize = 64 * 1024;
+
+        using DestructorMap = std::unordered_map<uint32_t, Communicator::MonitorableProcess*>;
+
+    public:
+        ProcessShutdown(ProcessShutdown&&) = delete;
+        ProcessShutdown(const ProcessShutdown&) = delete;
+        ProcessShutdown& operator=(const ProcessShutdown&) = delete;
+
+        ProcessShutdown()
+            : Core::Thread(ProcessShutdown::DestructionStackSize, "COMRPCTerminator")
+            , _adminLock()
+            , _destructors() {
         }
         ~ProcessShutdown() = default;
 
     public:
-        template <class IMPLEMENTATION, typename... Args>
-        static void Start(Args... args)
-        {
+        void ForceDestruct(const uint32_t id) {
 
-            std::unique_ptr<IMPLEMENTATION> handler(new IMPLEMENTATION(args...));
+            Communicator::MonitorableProcess* handler = nullptr;
 
-            uint32_t nextinterval = handler->AttemptClose(0);
+            _adminLock.Lock();
 
-            if (nextinterval != 0) {
-                _destructor.Schedule(Core::Time::Now().Add(nextinterval), ProcessShutdown(std::move(handler)));
-            }
-        }
-        uint64_t Timed(const uint64_t scheduledTime)
-        {
-            uint64_t result = 0;
+            DestructorMap::iterator index(_destructors.find(id));
 
-            uint32_t nextinterval = _handler->AttemptClose(_cycle++);
-
-            if (nextinterval != 0) {
-                result = Core::Time(scheduledTime).Add(nextinterval).Ticks();
-            } else {
-                ASSERT(_cycle != std::numeric_limits<uint8_t>::max()); //too many attempts trying to kill the process
+            if (index != _destructors.end()) {
+                handler = index->second;
+                _destructors.erase(index);
             }
 
-            return (result);
+            _adminLock.Unlock();
+
+            if (handler != nullptr) {
+
+                // Forcefully kill this ID.
+                handler->Destruct();
+                handler->Release();
+            }
         }
-
-    private:
-        std::unique_ptr<IClosingInfo> _handler;
-        uint8_t _cycle;
-        static Core::TimerType<ProcessShutdown>& _destructor;
-    };
-
-    /* static */ Core::TimerType<ProcessShutdown>& ProcessShutdown::_destructor(Core::SingletonType<Core::TimerType<ProcessShutdown>>::Instance(ProcessShutdown::DestructionStackSize, "ProcessDestructor"));
-
-    class LocalClosingInfo : public ProcessShutdown::IClosingInfo {
-    public:
-        LocalClosingInfo() = delete;
-        LocalClosingInfo(const LocalClosingInfo& copy) = delete;
-        LocalClosingInfo& operator=(const LocalClosingInfo& RHS) = delete;
-
-        explicit LocalClosingInfo(const uint32_t pid)
-            : _process(false, pid)
+        void Destruct(const uint32_t id, Communicator::MonitorableProcess& entry)
         {
+            _adminLock.Lock();
+
+            if (_destructors.find(id) == _destructors.end()) {
+                entry.AddRef();
+                _destructors.emplace(std::piecewise_construct,
+                    std::forward_as_tuple(id),
+                    std::forward_as_tuple(&entry));
+
+                Run();
+            }
+
+            _adminLock.Unlock();
         }
-        ~LocalClosingInfo() override = default;
+        void WaitForCompletion(Communicator::RemoteConnectionMap& parent) {
 
-    public:
-        uint32_t AttemptClose(const uint8_t iteration) override
-        {
-            uint32_t nextinterval = 0;
-            if (_process.IsActive() != false) {
-                switch (iteration) {
-                case 0:
-                    _process.Kill(false);
-                    nextinterval = 10000;
-                    break;
-                case 1:
-                    _process.Kill(true);
-                    nextinterval = 4000;
-                    break;
-                default:
-                    // This should not happen. This is a very stubbern process. Can be killed.
-                    ASSERT(false);
-                    break;
+            _adminLock.Lock();
+
+            DestructorMap::iterator index(_destructors.begin());
+
+            while (index != _destructors.end() ) {
+                if (index->second->operator==(parent) == true) {
+                    // Forcefully kill this ID.
+                    index->second->Destruct();
+                    index = _destructors.erase(index);
+                }
+                else {
+                    index++;
                 }
             }
-            return nextinterval;
+
+            _adminLock.Unlock();
         }
 
     private:
-        Core::Process _process;
-    };
+        uint32_t Worker() override {
+            uint32_t delay(Core::infinite);
+            uint64_t now(Core::Time::Now().Ticks());
+            uint64_t nextSlot(~0);
 
-#ifdef PROCESSCONTAINERS_ENABLED
+            _adminLock.Lock();
 
-    class ContainerClosingInfo : public ProcessShutdown::IClosingInfo {
-    public:
-        ContainerClosingInfo() = delete;
-        ContainerClosingInfo(const ContainerClosingInfo& copy) = delete;
-        ContainerClosingInfo& operator=(const ContainerClosingInfo& RHS) = delete;
+            DestructorMap::iterator index = _destructors.begin();
 
-        explicit ContainerClosingInfo(ProcessContainers::IContainer* container)
-            : _process(static_cast<uint32_t>(container->Pid()))
-            , _container(container)
-        {
-            container->AddRef();
-        }
-        ~ContainerClosingInfo() override
-        {
-            _container->Release();
-        }
-
-    public:
-        uint32_t AttemptClose(const uint8_t iteration) override
-        {
-            uint32_t nextinterval = 0;
-            if ((_process.Id() != 0 && _process.IsActive() == true) || (_process.Id() == 0 && _container->IsRunning() == true)) {
-                switch (iteration) {
-                case 0: {
-                    if (_process.Id() != 0) {
-                        _process.Kill(false);
-                    } else {
-                        _container->Stop(0);
+            while (index != _destructors.end()) {
+                if (index->second->Destruct(now) == false) {
+                    const uint64_t& newTime = index->second->Time();
+                    if (nextSlot > newTime) {
+                        nextSlot = newTime;
                     }
+                    index++;
                 }
-                    nextinterval = 10000;
-                    break;
-                case 1: {
-                    if (_process.Id() != 0) {
-                        _process.Kill(true);
-                        nextinterval = 4000;
-                    } else {
-                        ASSERT(false);
-                        nextinterval = 0;
-                    }
-                } break;
-                case 2:
-                    _container->Stop(0);
-                    nextinterval = 5000;
-                    break;
-                default:
-                    // This should not happen. This is a very stubbern process. Can not be killed.
-                    ASSERT(false);
-                    break;
+                else {
+                    index->second->Release();
+                    index = _destructors.erase(index);
                 }
             }
-            return nextinterval;
+
+            _adminLock.Unlock();
+
+            if (nextSlot != static_cast<uint64_t>(~0)) {
+                delay = (now > nextSlot ? 0 : static_cast<uint32_t>((nextSlot - now) / Core::Time::TicksPerMillisecond));
+            }
+
+            if (delay != 0) {
+                Core::Thread::Block();
+            }
+
+            return (delay);
         }
 
     private:
-        Core::Process _process;
-        ProcessContainers::IContainer* _container;
+        Core::CriticalSection _adminLock;
+        DestructorMap _destructors;
     };
 
-#endif
+    static ProcessShutdown& g_destructor = Core::SingletonType<ProcessShutdown>::Instance();
 
     /* static */ std::atomic<uint32_t> Communicator::RemoteConnection::_sequenceId(1);
 
@@ -209,20 +237,24 @@ namespace RPC {
     {
         static std::list<Core::Library> processProxyStubs;
 
-        Core::Directory index(pathName.c_str(), _T("*.so"));
+        Core::TextSegmentIterator places(Core::TextFragment(pathName), false, '|');
 
-        while (index.Next() == true) {
-            // Check if this ProxySTub file is already loaded in this process space..
-            std::list<Core::Library>::const_iterator loop(processProxyStubs.begin());
-            while ((loop != processProxyStubs.end()) && (loop->Name() != index.Current())) {
-                loop++;
-            }
+        while (places.Next() == true) {
+            Core::Directory index(places.Current().Text().c_str(), _T("*.so"));
 
-            if (loop == processProxyStubs.end()) {
-                Core::Library library(index.Current().c_str());
+            while (index.Next() == true) {
+                // Check if this ProxySTub file is already loaded in this process space..
+                std::list<Core::Library>::const_iterator loop(processProxyStubs.begin());
+                while ((loop != processProxyStubs.end()) && (loop->Name() != index.Current())) {
+                    loop++;
+                }
 
-                if (library.IsLoaded() == true) {
-                    processProxyStubs.push_back(library);
+                if (loop == processProxyStubs.end()) {
+                    Core::Library library(index.Current().c_str());
+
+                    if (library.IsLoaded() == true) {
+                        processProxyStubs.push_back(library);
+                    }
                 }
             }
         }
@@ -233,7 +265,7 @@ namespace RPC {
         return (_id);
     }
 
-    /* virtual */ void* Communicator::RemoteConnection::Aquire(const uint32_t waitTime, const string& className, const uint32_t interfaceId, const uint32_t version)
+    /* virtual */ void* Communicator::RemoteConnection::Acquire(const uint32_t waitTime, const string& className, const uint32_t interfaceId, const uint32_t version)
     {
         void* result(nullptr);
 
@@ -247,7 +279,7 @@ namespace RPC {
             uint32_t feedback = _channel->Invoke(message, waitTime);
 
             if (feedback == Core::ERROR_NONE) {
-                instance_id implementation = message->Response().Implementation();
+                Core::instance_id implementation = message->Response().Implementation();
 
                 if (implementation) {
                     // From what is returned, we need to create a proxy
@@ -275,9 +307,7 @@ namespace RPC {
         // Just submit our selves for destruction !!!!
 
         // Time to shoot the application, it will trigger a close by definition of the channel, if it is still standing..
-        if (_id != 0) {
-            ProcessShutdown::Start<LocalClosingInfo>(_id);
-        }
+        g_destructor.Destruct(Id(), *this);
     }
 
     uint32_t Communicator::LocalProcess::RemoteId() const
@@ -299,9 +329,7 @@ namespace RPC {
     void Communicator::ContainerProcess::Terminate() /* override */
     {
         ASSERT(_container != nullptr);
-        if (_container != nullptr) {
-            ProcessShutdown::Start<ContainerClosingInfo>(_container);
-        }
+        g_destructor.Destruct(Id(), *this);
     }
 
     void Communicator::ContainerProcess::PostMortem() /* override */
@@ -314,15 +342,14 @@ namespace RPC {
     }
 
 #endif
+    // Definitions of static members
+    uint8_t Communicator::_softKillCheckWaitTime = 10;
+    uint8_t Communicator::_hardKillCheckWaitTime = 4;
 
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
-
+    PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     Communicator::Communicator(const Core::NodeId& node, const string& proxyStubPath)
         : _connectionMap(*this)
-        , _ipcServer(node, _connectionMap, proxyStubPath)
-    {
+        , _ipcServer(node, _connectionMap, proxyStubPath) {
         if (proxyStubPath.empty() == false) {
             RPC::LoadProxyStubs(proxyStubPath);
         }
@@ -336,8 +363,7 @@ namespace RPC {
         const string& proxyStubPath,
         const Core::ProxyType<Core::IIPCServer>& handler)
         : _connectionMap(*this)
-        , _ipcServer(node, _connectionMap, proxyStubPath, handler)
-    {
+        , _ipcServer(node, _connectionMap, proxyStubPath, handler) {
         if (proxyStubPath.empty() == false) {
             RPC::LoadProxyStubs(proxyStubPath);
         }
@@ -345,6 +371,7 @@ namespace RPC {
         _ipcServer.CreateFactory<AnnounceMessage>(1);
         _ipcServer.CreateFactory<InvokeMessage>(3);
     }
+    POP_WARNING()
 
     /* virtual */ Communicator::~Communicator()
     {
@@ -356,41 +383,54 @@ namespace RPC {
 
         // Warn but we need to clos up existing connections..
         _connectionMap.Destroy();
+
+        // Now there are no more connections pending. Remove my pending IMonitorable::ICallback settings.
+        g_destructor.WaitForCompletion(_connectionMap);
+    }
+    void Communicator::Destroy(const uint32_t id) {
+        // This is a forceull call, blocking, to kill that specific connection
+        g_destructor.ForceDestruct(id);
+    }
+    void Communicator::LoadProxyStubs(const string& pathName) {
+        RPC::LoadProxyStubs(pathName);
+    }
+    const std::vector<string>& Communicator::Process::DynamicLoaderPaths() const {
+        return _LoaderPaths.Paths();
     }
 
+    PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
     CommunicatorClient::CommunicatorClient(
         const Core::NodeId& remoteNode)
         : Core::IPCChannelClientType<Core::Void, false, true>(remoteNode, CommunicationBufferSize)
-        , _announceMessage(Core::ProxyType<RPC::AnnounceMessage>::Create())
+        , _announceMessage()
         , _announceEvent(false, true)
-        , _handler(this)
         , _connectionId(~0)
     {
+        _announceMessage.AddRef();
+
         CreateFactory<RPC::AnnounceMessage>(1);
         CreateFactory<RPC::InvokeMessage>(2);
 
-        Register(RPC::InvokeMessage::Id(), Core::ProxyType<Core::IIPCServer>(Core::ProxyType<InvokeHandlerImplementation>::Create()));
-        Register(RPC::AnnounceMessage::Id(), Core::ProxyType<Core::IIPCServer>(Core::ProxyType<AnnounceHandlerImplementation>::Create(this)));
+        Register(RPC::InvokeMessage::Id(), Core::ProxyType<Core::IIPCServer>(Core::ProxyType<InvokeHandler>::Create()));
+        Register(RPC::AnnounceMessage::Id(), Core::ProxyType<Core::IIPCServer>(Core::ProxyType<AnnounceHandler>::Create(*this)));
     }
-
     CommunicatorClient::CommunicatorClient(
         const Core::NodeId& remoteNode,
         const Core::ProxyType<Core::IIPCServer>& handler)
         : Core::IPCChannelClientType<Core::Void, false, true>(remoteNode, CommunicationBufferSize)
-        , _announceMessage(Core::ProxyType<RPC::AnnounceMessage>::Create())
+        , _announceMessage()
         , _announceEvent(false, true)
-        , _handler(this)
         , _connectionId(~0)
     {
+        _announceMessage.AddRef();
+
         CreateFactory<RPC::AnnounceMessage>(1);
         CreateFactory<RPC::InvokeMessage>(2);
 
         BaseClass::Register(RPC::InvokeMessage::Id(), handler);
-        BaseClass::Register(RPC::AnnounceMessage::Id(), handler);
+        BaseClass::Register(RPC::AnnounceMessage::Id(), Core::ProxyType<Core::IIPCServer>(Core::ProxyType<AnnounceHandler>::Create(*this)));
     }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
+    POP_WARNING()
 
     CommunicatorClient::~CommunicatorClient()
     {
@@ -401,6 +441,8 @@ namespace RPC {
 
         DestroyFactory<RPC::InvokeMessage>();
         DestroyFactory<RPC::AnnounceMessage>();
+
+        _announceMessage.CompositRelease();
     }
 
     uint32_t CommunicatorClient::Open(const uint32_t waitTime)
@@ -409,7 +451,7 @@ namespace RPC {
         _announceEvent.ResetEvent();
 
         //do not set announce parameters, we do not know what side will offer the interface
-        _announceMessage->Parameters().Set(Core::ProcessInfo().Id());
+        _announceMessage.Parameters().Set(Core::ProcessInfo().Id());
 
         uint32_t result = BaseClass::Open(waitTime);
 
@@ -425,7 +467,7 @@ namespace RPC {
         ASSERT(BaseClass::IsOpen() == false);
         _announceEvent.ResetEvent();
 
-        _announceMessage->Parameters().Set(Core::ProcessInfo().Id(), className, interfaceId, version);
+        _announceMessage.Parameters().Set(Core::ProcessInfo().Id(), className, interfaceId, version);
 
         uint32_t result = BaseClass::Open(waitTime);
 
@@ -441,9 +483,9 @@ namespace RPC {
         ASSERT(BaseClass::IsOpen() == false);
         _announceEvent.ResetEvent();
 
-        instance_id impl = instance_cast<void*>(implementation);
+        Core::instance_id impl = instance_cast<void*>(implementation);
 
-        _announceMessage->Parameters().Set(Core::ProcessInfo().Id(), interfaceId, impl, exchangeId);
+        _announceMessage.Parameters().Set(Core::ProcessInfo().Id(), interfaceId, impl, exchangeId);
 
         uint32_t result = BaseClass::Open(waitTime);
 
@@ -459,18 +501,17 @@ namespace RPC {
         return (BaseClass::Close(waitTime));
     }
 
-    /* virtual */ void CommunicatorClient::StateChange()
-    {
+    void CommunicatorClient::StateChange() /* override */ {
         BaseClass::StateChange();
 
         if (BaseClass::Source().IsOpen()) {
             TRACE_L1("Invoking the Announce message to the server. %d", __LINE__);
-            uint32_t result = Invoke<RPC::AnnounceMessage>(_announceMessage, this);
+            uint32_t result = Invoke<RPC::AnnounceMessage>(Core::ProxyType<RPC::AnnounceMessage>(_announceMessage), this);
 
             if (result != Core::ERROR_NONE) {
                 TRACE_L1("Error during invoke of AnnounceMessage: %d", result);
             } else {
-                RPC::Data::Init& setupFrame(_announceMessage->Parameters());
+                RPC::Data::Init& setupFrame(_announceMessage.Parameters());
 
                 if (setupFrame.IsRequested() == true) {
                     Core::ProxyType<Core::IPCChannel> refChannel(*this);
@@ -494,14 +535,14 @@ namespace RPC {
         ASSERT(dynamic_cast<RPC::AnnounceMessage*>(&element) != nullptr);
 
         if (announceMessage->Response().IsSet() == true) {
-            // Is result of an announce message, contains default trace categories in JSON format.
-            string jsonDefaultCategories(announceMessage->Response().TraceCategories());
-            // HPL todo: we need to extend sending this info here, or just pass the complete config and have it parsed here (nothing would need to be dynamicaly changed, we will not suport that)
+            string jsonMessagingCategories(announceMessage->Response().MessagingCategories());
 
-            if (jsonDefaultCategories.empty() == false) {
-                Trace::TraceUnit::Instance().Defaults(jsonDefaultCategories);
+#if defined(WARNING_REPORTING_ENABLED)
+            string jsonDefaultWarningCategories(announceMessage->Response().WarningReportingCategories());
+            if(jsonDefaultWarningCategories.empty() == false){
+                WarningReporting::WarningReportingUnit::Instance().Defaults(jsonDefaultWarningCategories);
             }
-
+#endif
             _connectionId = announceMessage->Response().SequenceNumber();
 
             string proxyStubPath(announceMessage->Response().ProxyStubPath());

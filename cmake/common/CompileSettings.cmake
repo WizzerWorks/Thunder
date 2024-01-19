@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,65 +51,56 @@ else()
 endif()
 
 if(PERFORMANCE_MONITOR)
-    target_compile_definitions(CompileSettings INTERFACE -DTHUNDER_PERFORMANCE=1)
+    target_compile_definitions(CompileSettings INTERFACE "THUNDER_PERFORMANCE=1")
 endif()
 
-if(NOT BUILD_TYPE)
-    set(BUILD_TYPE Production)
-    message(AUTHOR_WARNING "BUILD_TYPE not set, assuming '${BUILD_TYPE}'")
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE MinSizeRel)
+    message(AUTHOR_WARNING "CMAKE_BUILD_TYPE not set, assuming '${CMAKE_BUILD_TYPE}'")
 endif()
 
-target_compile_definitions(CompileSettings INTERFACE PLATFORM_${PLATFORM}=1)
-message(STATUS "Selected platform ${PLATFORM}")
+# target_compile_definitions(CompileSettings INTERFACE "THUNDER_PLATFORM=${THUNDER_PLATFORM}")
+# message(STATUS "Selected platform ${THUNDER_PLATFORM}")
 
 target_compile_options(CompileSettings INTERFACE -std=c++11 -Wno-psabi)
+
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(CompileSettings INTERFACE BUILD_SHARED_LIBS)
+endif()
 
 #
 # Build type specific options
 #
-if("${BUILD_TYPE}" STREQUAL "Debug")
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     target_compile_definitions(CompileSettings INTERFACE _THUNDER_DEBUG)
+    target_compile_definitions(CompileSettings INTERFACE _THUNDER_CALLSTACK_INFO)
     target_compile_options(CompileSettings INTERFACE -funwind-tables)
     set(CONFIG_DIR "Debug" CACHE STRING "Build config directory" FORCE)
 
-elseif("${BUILD_TYPE}" STREQUAL "DebugOptimized")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DebugOptimized")
     target_compile_definitions(CompileSettings INTERFACE _THUNDER_DEBUG)
+    target_compile_definitions(CompileSettings INTERFACE _THUNDER_CALLSTACK_INFO)
     target_compile_options(CompileSettings INTERFACE -funwind-tables)
     set(CONFIG_DIR "DebugOptimized" CACHE STRING "Build config directory" FORCE)
 
-elseif("${BUILD_TYPE}" STREQUAL "ReleaseSymbols")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
     target_compile_definitions(CompileSettings INTERFACE _THUNDER_NDEBUG)
+    target_compile_definitions(CompileSettings INTERFACE _THUNDER_CALLSTACK_INFO)
     target_compile_options(CompileSettings INTERFACE -funwind-tables)
-    set(CONFIG_DIR "ReleaseSymbols" CACHE STRING "Build config directory" FORCE)
+    set(CONFIG_DIR "RelWithDebInfo" CACHE STRING "Build config directory" FORCE)
 
-elseif("${BUILD_TYPE}" STREQUAL "Release")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
     target_compile_definitions(CompileSettings INTERFACE _THUNDER_NDEBUG)
+    target_compile_definitions(CompileSettings INTERFACE _THUNDER_CALLSTACK_INFO)
     target_compile_options(CompileSettings INTERFACE -funwind-tables)
     set(CONFIG_DIR "Release" CACHE STRING "Build config directory" FORCE)
 
-elseif("${BUILD_TYPE}" STREQUAL "Production")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")
     target_compile_definitions(CompileSettings INTERFACE _THUNDER_NDEBUG _THUNDER_PRODUCTION)
-    set(CONFIG_DIR "Production" CACHE STRING "Build config directory" FORCE)
+    set(CONFIG_DIR "MinSizeRel" CACHE STRING "Build config directory" FORCE)
 
 else()
-    message(FATAL_ERROR "Invalid BUILD_TYPE: '${BUILD_TYPE}'")
-endif()
-
-
-#
-# Compiler specific options
-#
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "Compiling with Clang")
-    target_compile_options(CompileSettings INTERFACE -Weverything)
-elseif(${CMAKE_COMPILER_IS_GNUCXX})
-    message(STATUS "Compiling with GCC")
-    target_compile_options(CompileSettings INTERFACE -Wall)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-    message(STATUS "Compiling with MS Visual Studio")
-    target_compile_options(CompileSettings INTERFACE /W4)
-else()
-    message(STATUS "Compiler ${CMAKE_CXX_COMPILER_ID}")
+    message(FATAL_ERROR "Invalid CMAKE_BUILD_TYPE: '${CMAKE_BUILD_TYPE}'")
 endif()
 
 # END CompileSettings

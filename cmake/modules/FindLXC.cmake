@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if(LXC_FIND_QUIETLY)
+    set(_LXC_MODE QUIET)
+elseif(LXC_FIND_REQUIRED)
+    set(_LXC_MODE REQUIRED)
+endif()
+
 find_package(PkgConfig)
-pkg_check_modules(PC_LXC lxc)
-
-include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(PC_LXC DEFAULT_MSG PC_LXC_FOUND)
-
-mark_as_advanced(PC_LXC_INCLUDE_DIRS PC_LXC_LIBRARIES PC_LXC_LIBRARY_DIRS)
+pkg_check_modules(PC_LXC ${_LXC_MODE} lxc)
 
 if(${PC_LXC_FOUND})
 
@@ -31,9 +32,12 @@ if(${PC_LXC_FOUND})
 
     set(LXC_LIBRARIES ${PC_LXC_LIBRARIES})
     set(LXC_INCLUDES ${PC_LXC_INCLUDE_DIRS})
-    set(LXC_FOUND ${PC_LXC_FOUND})
 
-    if(NOT TARGET LXC::LXC)
+    include(FindPackageHandleStandardArgs)
+    find_package_handle_standard_args(LXC DEFAULT_MSG PC_LXC_FOUND LXC_LIBRARY LXC_LIBRARIES LXC_INCLUDES)
+    mark_as_advanced(LXC_LIBRARY LXC_LIBRARIES LXC_INCLUDES)
+
+    if(LXC_FOUND AND NOT TARGET LXC::LXC)
         add_library(LXC::LXC UNKNOWN IMPORTED)
 
         set_target_properties(LXC::LXC

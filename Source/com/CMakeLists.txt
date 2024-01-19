@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,45 +18,53 @@
 set(TARGET ${NAMESPACE}COM)
 
 ProxyStubGenerator(NAMESPACE "WPEFramework::RPC" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/ICOM.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-ProxyStubGenerator(NAMESPACE "WPEFramework::Trace" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/ITrace.h" OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-add_library(${TARGET} SHARED
-        Administrator.cpp
-        Communicator.cpp
-        ITracing.cpp
-        IUnknown.cpp
-        ConnectorType.cpp
-        Module.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/generated/ProxyStubs_COM.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/generated/ProxyStubs_Trace.cpp
-        )
+add_library(${TARGET}
+    Module.cpp
+    Administrator.cpp
+    Communicator.cpp
+    IUnknown.cpp
+    ConnectorType.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/ProxyStubs_COM.cpp
+)
 
 set(PUBLIC_HEADERS
-        Administrator.h
-        com.h
-        Communicator.h
-        ConnectorType.h
-        Ids.h
-        IRPCIterator.h
-        IStringIterator.h
-        IValueIterator.h
-        ICOM.h
-        ITrace.h
-        IUnknown.h
-        Messages.h
-        Module.h
-        Module.h
-        )
+    Administrator.h
+    com.h
+    Communicator.h
+    ConnectorType.h
+    Ids.h
+    IteratorType.h
+    IIteratorType.h
+    IStringIterator.h
+    IValueIterator.h
+    ICOM.h
+    IUnknown.h
+    Messages.h
+    ProxyStubs.h
+    Module.h
+)
 
 target_link_libraries(${TARGET}
-        PUBLIC
-          ${NAMESPACE}Core::${NAMESPACE}Core
-          ${NAMESPACE}Tracing::${NAMESPACE}Tracing
         PRIVATE
+          ${NAMESPACE}Core::${NAMESPACE}Core
+          ${NAMESPACE}Messaging::${NAMESPACE}Messaging
           CompileSettingsDebug::CompileSettingsDebug
         )
 
-target_include_directories(${TARGET} 
+if (WARNING_REPORTING)
+target_compile_definitions(${TARGET}
+PUBLIC
+        WARNING_REPORTING_ENABLED
+)
+
+target_link_libraries(${TARGET}
+PUBLIC
+        ${NAMESPACE}WarningReporting::${NAMESPACE}WarningReporting
+)
+endif()
+
+target_include_directories(${TARGET}
         PRIVATE
           $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

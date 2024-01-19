@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -104,7 +104,7 @@ namespace Tests {
     std::condition_variable Job::_cv;
     ::ThreadId Job::_parentTPid = Core::Thread::ThreadId();
 
-    TEST(DISABLED_Core_Thread, SimpleThread)
+    TEST(Core_Thread, DISABLED_SimpleThread)
     {
         ::ThreadId parentTid = Core::Thread::ThreadId();
         volatile bool threadDone = false;

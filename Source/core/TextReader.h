@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,13 @@
  * limitations under the License.
  */
  
-#ifndef __TEXTREADER_H
-#define __TEXTREADER_H
+#pragma once
 
 // ---- Include system wide include files ----
 
 // ---- Include local include files ----
-#include "DataElement.h"
 #include "Module.h"
+#include "DataElement.h"
 #include "TextFragment.h"
 
 namespace WPEFramework {
@@ -42,7 +41,7 @@ namespace Core {
             , m_DataBlock()
         {
         }
-        TextReader(const DataElement& element, const uint32_t offset = 0)
+        TextReader(DataElement& element, const uint32_t offset = 0)
             : m_Index(offset)
             , m_DataBlock(element)
         {
@@ -52,9 +51,7 @@ namespace Core {
             , m_DataBlock(copy.m_DataBlock)
         {
         }
-        ~TextReader()
-        {
-        }
+        ~TextReader() = default;
 
         TextReader& operator=(const TextReader& rhs)
         {
@@ -69,12 +66,10 @@ namespace Core {
         {
             m_Index = 0;
         }
-
         inline bool EndOfText() const
         {
             return (m_Index >= static_cast<uint32_t>(m_DataBlock.Size()));
         }
-
         TextFragment ReadLine() const;
 
     private:
@@ -83,5 +78,3 @@ namespace Core {
     };
 }
 } // namespace Core
-
-#endif // __TEXTREADER_H

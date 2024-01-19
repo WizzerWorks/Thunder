@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -318,9 +318,7 @@ namespace Core {
         using Response = typename DATAEXCHANGE::Response;
 
     public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
         template <typename... Args>
         MessageExchangeType(Args... args)
             : _channel(*this, args...)
@@ -331,12 +329,8 @@ namespace Core {
 
         {
         }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-        virtual ~MessageExchangeType()
-        {
-        }
+POP_WARNING()
+        virtual ~MessageExchangeType() = default;
 
     public:
         inline SOURCE& Link()
@@ -361,9 +355,10 @@ namespace Core {
         }
         inline uint32_t Flush()
         {
+            _channel.Flush();
+
             _responses.Lock();
 
-            _channel.Flush();
             _responses.Flush();
             _buffer.Flush();
 
@@ -412,7 +407,7 @@ namespace Core {
 
                 _channel.Trigger();
 
-                result = _responses.Aquire(allowedTime);
+                result = _responses.Acquire(allowedTime);
 
                 _responses.Lock();
 

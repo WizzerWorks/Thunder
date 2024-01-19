@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,29 +82,146 @@
 #else
   #if __GNUC__ >= 4 && !defined(__mips__)
     #define EXTERNAL_HIDDEN __attribute__ ((visibility ("hidden")))
-    #define EXTERNAL        __attribute__ ((visibility ("default")))
-  #else
+    #define EXTERNAL_EXPORT __attribute__ ((visibility ("default")))
+    #define EXTERNAL EXTERNAL_EXPORT        
+#else
     #define EXTERNAL
     #define EXTERNAL_HIDDEN
+    #define EXTERNAL_EXPORT 
   #endif
+#endif
+
+#if defined(__GNUC__)
+    #pragma GCC system_header
+#elif defined(__clang__)
+    #pragma clang system_header
+#endif
+
+#ifdef __WINDOWS__
+    #define DO_PRAGMA(x) __pragma(x)
+
+    #define PUSH_WARNING_ DO_PRAGMA(warning(push))
+    #define PUSH_WARNING_ARG_(WARNING) DO_PRAGMA(warning(disable: WARNING))
+    #define POP_WARNING_ DO_PRAGMA(warning(pop))
+
+#else
+    #define DO_PRAGMA(x) _Pragma(#x)
+
+    #if defined(__clang__)
+        #define PUSH_WARNING_ _Pragma("clang diagnostic push")
+        #define PUSH_WARNING_ARG_(WARNING) DO_PRAGMA(clang diagnostic ignored #WARNING)
+        #define POP_WARNING_ _Pragma("clang diagnostic pop")
+
+    #elif (__GNUC__ >= 4)
+        #define PUSH_WARNING_ _Pragma("GCC diagnostic push")
+        #define PUSH_WARNING_ARG_(WARNING) DO_PRAGMA(GCC diagnostic ignored WARNING)
+        #define POP_WARNING_ _Pragma("GCC diagnostic pop")
+
+    #else
+        #define PUSH_WARNING_(WARNING)
+        #define PUSH_WARNING_ARG_
+        #define POP_WARNING_
+    #endif
+#endif
+
+#define DEFINE_STRING_1(parameter) #parameter
+#define DEFINE_STRING(parameter) DEFINE_STRING_1(parameter)
+#define CONCAT_STRINGS_1(ARG1, ARG2)  ARG1##ARG2
+#define CONCAT_STRINGS(ARG1, ARG2)  CONCAT_STRINGS_1(ARG1,ARG2)
+#define PUSH_WARNING_ROLL_1(WARNING, ...) WARNING
+#define PUSH_WARNING_ROLL_2(WARNING, ...) WARNING PUSH_WARNING_ROLL_1(__VA_ARGS__)
+#define PUSH_WARNING_ROLL_3(WARNING, ...) WARNING PUSH_WARNING_ROLL_2(__VA_ARGS__)
+#define PUSH_WARNING_ROLL_4(WARNING, ...) WARNING PUSH_WARNING_ROLL_3(__VA_ARGS__)
+#define PUSH_WARNING_ROLL_5(WARNING, ...) WARNING PUSH_WARNING_ROLL_4(__VA_ARGS__)
+
+// Seems to be a MSVC issue, see: https://stackoverflow.com/questions/9183993/msvc-variadic-macro-expansion
+#define PUSH_RETURN_ARG_COUNT(_1_, _2_, _3_, _4_, _5_, _6_, _7_, _8_, count, ...) count
+#define PUSH_EXPAND_ARGS(args) PUSH_RETURN_ARG_COUNT args
+#define PUSH_COUNT_ARGS(...) PUSH_EXPAND_ARGS((__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0))
+
+#define PUSH_WARNING_ARG(N, ...) CONCAT_STRINGS(PUSH_WARNING_ROLL_, N)(__VA_ARGS__)
+#define PUSH_WARNING(...) \
+    PUSH_WARNING_ PUSH_WARNING_ARG(PUSH_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
+
+#define POP_WARNING() POP_WARNING_
+
+#ifdef __WINDOWS__
+// W4 -- Make sure the "conditional expression is constant"
+#define DISABLE_WARNING_CONDITIONAL_EXPRESSION_IS_CONSTANT PUSH_WARNING_ARG_(4127)
+// W4 -- Nonstandard extension used : zero-sized array in struct/union
+#define DISABLE_WARNING_NON_STANDARD_EXTENSION_USED PUSH_WARNING_ARG_(4200)
+// W3 -- Make sure the "clas 'xxxx' needs to have dll-interface to be used by clients of class 'xxxx'"
+#define DISABLE_WARNING_DLL_INTERFACE_UNAVAILABLE PUSH_WARNING_ARG_(4251)
+// W3 -- C++ exception specification ignored except to indicate a function is not __declspec(nothrow)
+#define DISABLE_WARNING_EXCEPTION_SPECIFICATION PUSH_WARNING_ARG_(4290)
+// W3 -- No matching operator delete found; memory will not be freed if initialization throws an exception
+#define DISABLE_WARNING_NO_MATCHING_OPERATOR_DELETE PUSH_WARNING_ARG_(4291)
+// W2 -- Conversion : truncation from 'type 1' to 'type 2'
+#define DISABLE_WARNING_CONVERSION_TRUNCATION PUSH_WARNING_ARG_(4302)
+// W1 -- Variable : pointer truncation from 'type' to 'type'
+#define DISABLE_WARNING_POINTER_TRUNCATION PUSH_WARNING_ARG_(4311)
+// W1 -- Operation : conversion from 'type1' to 'type2' of greater size
+#define DISABLE_WARNING_CONVERSION_TO_GREATERSIZE PUSH_WARNING_ARG_(4312)
+// W1 & 4 -- The 'this' pointer : used in base member initializer list
+#define DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST PUSH_WARNING_ARG_(4355)
+// W3 -- Make sure the "C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc"
+#define DISABLE_WARNING_UNWIND_SEMANTICS_NOT_ENABLED PUSH_WARNING_ARG_(4530)
+// W1 -- 'class1' : base-class 'class2' is already a base-class of 'class3'.
+#define DISABLE_WARNING_MULTPILE_INHERITENCE_OF_BASE_CLASS PUSH_WARNING_ARG_(4584)
+// W1 -- Discarding return value of function with 'nodiscard' attribute
+#define DISABLE_WARNING_DISCARD_RETURN_VALUE_FOR_NONDISCARD_FUNCTION PUSH_WARNING_ARG_(4834)
+// W3 -- Code uses a function, class member, variable, or typedef that's marked deprecated
+#define DISABLE_WARNING_DEPRECATED_USE PUSH_WARNING_ARG_(4996)
+#define DISABLE_WARNING_MISSING_FIELD_INITIALIZERS
+// W3 - 'identifier': unreferenced local variable
+#define DISABLE_WARNING_UNUSED_VARIABLES PUSH_WARNING_ARG_(4101)
+// W4 - 'identifier': unreferenced formal parameter
+#define DISABLE_WARNING_UNUSED_PARAMETERS PUSH_WARNING_ARG_(4100)
+// W4 - 'function': unreferenced function with internal linkage has been removed
+#define DISABLE_WARNING_UNUSED_FUNCTIONS PUSH_WARNING_ARG_(5242)
+#define DISABLE_WARNING_DEPRECATED_COPY
+#define DISABLE_WARNING_NON_VIRTUAL_DESTRUCTOR
+#define DISABLE_WARNING_UNUSED_RESULT
+#define DISABLE_WARNING_TYPE_LIMITS
+#define DISABLE_WARNING_STRING_OPERATION_OVERREAD
+#define DISABLE_WARNING_PEDANTIC
+
+#else
+#define DISABLE_WARNING_CONDITIONAL_EXPRESSION_IS_CONSTANT
+#define DISABLE_WARNING_NON_STANDARD_EXTENSION_USED
+#define DISABLE_WARNING_DLL_INTERFACE_UNAVAILABLE
+#define DISABLE_WARNING_EXCEPTION_SPECIFICATION
+#define DISABLE_WARNING_NO_MATCHING_OPERATOR_DELETE
+#define DISABLE_WARNING_CONVERSION_TRUNCATION
+#define DISABLE_WARNING_POINTER_TRUNCATION
+#define DISABLE_WARNING_CONVERSION_TO_GREATERSIZE
+#define DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST
+#define DISABLE_WARNING_MULTPILE_INHERITENCE_OF_BASE_CLASS
+#define DISABLE_WARNING_DISCARD_RETURN_VALUE_FOR_NONDISCARD_FUNCTION
+
+#if defined(__clang__) || (__GNUC__ >= 4)
+#define DISABLE_WARNING_MISSING_FIELD_INITIALIZERS PUSH_WARNING_ARG_("-Wmissing-field-initializers")
+#define DISABLE_WARNING_UNUSED_VARIABLES PUSH_WARNING_ARG_("-Wunused-variable")
+#define DISABLE_WARNING_UNUSED_PARAMETERS PUSH_WARNING_ARG_("-Wunused-parameter")
+#define DISABLE_WARNING_UNUSED_FUNCTIONS PUSH_WARNING_ARG_("-Wunused-function")
+#define DISABLE_WARNING_UNUSED_RESULT PUSH_WARNING_ARG_("-Wunused-result")
+#define DISABLE_WARNING_DEPRECATED_USE PUSH_WARNING_ARG_("-Wdeprecated-declarations")
+#define DISABLE_WARNING_DEPRECATED_COPY PUSH_WARNING_ARG_("-Wdeprecated-copy")
+#define DISABLE_WARNING_NON_VIRTUAL_DESTRUCTOR PUSH_WARNING_ARG_("-Wnon-virtual-dtor")
+#define DISABLE_WARNING_TYPE_LIMITS PUSH_WARNING_ARG_("-Wtype-limits")
+#define DISABLE_WARNING_STRING_OPERATION_OVERREAD PUSH_WARNING_ARG_("-Wstringop-overread")
+#define DISABLE_WARNING_PEDANTIC PUSH_WARNING_ARG_("-Wpedantic")
+#endif
 #endif
 
 #if defined WIN32 || defined _WINDOWS
 
-// W3 -- warning C4290: C++ exception specification ignored except to indicate a function is not __declspec(nothrow)
-#pragma warning(disable : 4290)
-
-// W3 -- Make sure the "clas 'xxxx' needs to have dll-interface to be used by clients of class 'xxxx'"
-#pragma warning(disable : 4251)
-
-// W3 -- Make sure the "C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc"
-#pragma warning(disable : 4530)
-
-// W4 -- Make sure the "conditional expression is constant"
-#pragma warning(disable : 4127)
-
-// W3 -- No matching operator delete found; memory will not be freed if initialization throws an exception
-#pragma warning(disable : 4291)
+PUSH_WARNING( \
+    DISABLE_WARNING_EXCEPTION_SPECIFICATION, \
+    DISABLE_WARNING_DLL_INTERFACE_UNAVAILABLE, \
+    DISABLE_WARNING_UNWIND_SEMANTICS_NOT_ENABLED, \
+    DISABLE_WARNING_CONDITIONAL_EXPRESSION_IS_CONSTANT, \
+    DISABLE_WARNING_NO_MATCHING_OPERATOR_DELETE)
 
 #ifdef _WIN64
 #define __SIZEOF_POINTER__ 8
@@ -136,18 +253,24 @@
 #include <array>
 #include <thread>
 #include <stdarg.h> /* va_list, va_start, va_arg, va_end */
+#include <inttypes.h>
+#include <io.h>
 
 #define AF_NETLINK 16
 #define AF_PACKET  17
 
-inline void SleepS(unsigned int a_Time)
+// template class __declspec(dllexport) std::basic_string<char>;
+
+inline void SleepS(const uint32_t time)
 {
-    ::Sleep(a_Time * 1000);
+    ::Sleep(time * 1000);
 }
-inline void SleepMs(unsigned int a_Time)
+inline void SleepMs(const uint32_t time)
 {
-    ::Sleep(a_Time);
+    ::Sleep(time);
 }
+
+EXTERNAL void SleepUs(const uint32_t time);
 
 #ifdef _UNICODE
 typedef std::wstring string;
@@ -217,6 +340,8 @@ typedef std::string string;
 #undef min
 #undef max
 #undef ERROR_NOT_SUPPORTED
+#undef ERROR_HIBERNATED
+#undef ERROR_INVALID_PARAMETER
 
 //#if _MSC_VER >= 1600
 //const std::basic_string<char>::size_type std::basic_string<char>::npos = (std::basic_string<char>::size_type) - 1;
@@ -233,47 +358,50 @@ typedef std::string string;
 
 #ifdef __LINUX__
 
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cassert>
+#include <string>
 #include <algorithm>
 #include <atomic>
 #include <array>
 #include <map>
+#include <unordered_map>
 #include <list>
-#include <alloca.h>
-#include <arpa/inet.h>
-#include <assert.h>
-#include <cxxabi.h>
+#include <typeinfo>
 #include <cmath>
+#include <thread>
+
+#include <string.h>
+#include <termios.h>
+#include <unistd.h>
+#include <stdarg.h> /* va_list, va_start, va_arg, va_end */
+#include <alloca.h>
+#include <cxxabi.h>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <getopt.h>
-#include <list>
 #include <math.h>
-#include <map>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <string>
-#include <strings.h>
+#include <inttypes.h>
+
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <termios.h>
-#include <typeinfo>
-#include <unistd.h>
-#include <unordered_map>
-#include <thread>
-#include <stdarg.h> /* va_list, va_start, va_arg, va_end */
+#include <sys/mman.h> // memfd_create in Messaging/ConsoleRedirect.h
+
+#include <arpa/inet.h>
 
 #ifdef __APPLE__
 #include <pthread_impl.h>
@@ -302,6 +430,8 @@ int clock_gettime(int, struct timespec*);
 #define ODDPARITY (PARENB | PARODD)
 #define MARKPARITY  8
 #define SPACEPARITY 9
+
+#define INVALID_HANDLE_VALUE -1
 
 #define ESUCCESS 0
 #define _Geterrno() errno
@@ -369,7 +499,8 @@ int clock_gettime(int, struct timespec*);
 
 #define ALLOCA alloca
 
-extern void EXTERNAL SleepMs(unsigned int a_Time);
+extern void EXTERNAL SleepMs(const unsigned int a_Time);
+extern void EXTERNAL SleepUs(const unsigned int a_Time);
 inline void EXTERNAL SleepS(unsigned int a_Time)
 {
     ::SleepMs(a_Time * 1000);
@@ -380,7 +511,7 @@ inline void EXTERNAL SleepS(unsigned int a_Time)
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 #define BIG_ENDIAN_PLATFORM 1
 #else
-#pragma message "Unknown endianess"
+#error "Unknown endianess: please set __BYTE_ORDER__ to proper endianess"
 #endif
 
 #endif
@@ -390,14 +521,17 @@ inline void EXTERNAL SleepS(unsigned int a_Time)
 #define DEPRECATED __attribute__((deprecated))
 #define VARIABLE_IS_NOT_USED __attribute__((unused))
 #define WARNING_RESULT_NOT_USED __attribute__((warn_unused_result))
+#define PRINTF_FORMAT(fmt, ellipsis) __attribute__ ((format (printf, fmt, ellipsis)))
 #elif defined(_MSC_VER)
 #define DEPRECATED __declspec(deprecated)
 #define VARIABLE_IS_NOT_USED
 #define WARNING_RESULT_NOT_USED
+#define PRINTF_FORMAT(fmt, ellipsis)
 #else
 #define DEPRECATED
 #define VARIABLE_IS_NOT_USED
 #define WARNING_RESULT_NOT_USED
+#define PRINTF_FORMAT(fmt, ellipsis)
 #endif
 
 #if !defined(NDEBUG)
@@ -410,7 +544,7 @@ inline void EXTERNAL SleepS(unsigned int a_Time)
 #endif
 
 #ifdef __LINUX__
-#if !defined(OS_ANDROID) && !defined(OS_NACL) && defined(__GLIBC__)
+#if !defined(OS_ANDROID) && !defined(OS_NACL) && defined(__GLIBC__) && defined(_THUNDER_CALLSTACK_INFO)
 #define THUNDER_BACKTRACE 1
 #include <execinfo.h>
 #endif
@@ -455,13 +589,18 @@ struct TemplateIntToType {
 
 extern "C" {
 
-extern EXTERNAL void* memrcpy(void* _Dst, const void* _Src, size_t _MaxCount);
+DEPRECATED inline EXTERNAL void* memrcpy(void* _Dst, const void* _Src, size_t _MaxCount)
+{
+    return (::memmove(_Dst, _Src, _MaxCount));
+}
 
 #if defined(__LINUX__)
 uint64_t htonll(const uint64_t& value);
 uint64_t ntohll(const uint64_t& value);
 #endif
 }
+
+#define SLEEPSLOT_POLLING_TIME 100
 
 // ---- Helper types and constants ----
 #define _TXT(THETEXT) \
@@ -518,29 +657,11 @@ typedef std::string string;
 #ifdef __LINUX__
 typedef pthread_t ThreadId;
 #else
-typedef HANDLE ThreadId;
+typedef DWORD ThreadId;
 #endif
 
 #define QUOTE(str) #str
 #define EXPAND_AND_QUOTE(str) QUOTE(str)
-
-extern "C" {
-
-#ifdef __WINDOWS__
-extern int EXTERNAL inet_aton(const char* cp, struct in_addr* inp);
-extern void EXTERNAL usleep(const uint32_t value);
-#endif
-
-inline void SleepUs(unsigned int a_Time)
-{
-    ::usleep(a_Time);
-}
-
-
-void EXTERNAL DumpCallStack(const ThreadId threadId, std::list<string>& stack);
-uint32_t EXTERNAL GetCallStack(const ThreadId threadId, void* addresses[], const uint32_t bufferSize);
-
-}
 
 #if !defined(__DEBUG)
 #define DEBUG_VARIABLE(X) (void)(X)
@@ -552,14 +673,38 @@ namespace WPEFramework {
 
 namespace Core {
 
+    #if defined(__CORE_INSTANCE_BITS__) && (__CORE_INSTANCE_BITS__ != 0)
+    #if __CORE_INSTANCE_BITS__ <= 8
+    typedef uint8_t instance_id;
+    #elif __CORE_INSTANCE_BITS__ <= 16
+    typedef uint16_t instance_id;
+    #elif __CORE_INSTANCE_BITS__ <= 32 
+    typedef uint32_t instance_id;
+    #elif __CORE_INSTANCE_BITS__ <= 64
+    typedef uint64_t instance_id;
+    #endif
+    #else
+    #if defined(__SIZEOF_POINTER__) && (__SIZEOF_POINTER__ == 8) 
+    typedef uint64_t instance_id;
+    #else
+    typedef uint32_t instance_id;
+    #endif
+    #endif
+
+    typedef uint32_t hresult;
+
+    struct callstack_info {
+        void*    address;
+        string   module;
+        string   function;
+        uint32_t line;
+    };
+
+
     inline void* Alignment(size_t alignment, void* incoming)
     {
         const auto basePtr = reinterpret_cast<uintptr_t>(incoming);
-#ifdef __WINDOWS__
-        return reinterpret_cast<void*>((basePtr - 1u + alignment) & ~alignment);
-#else
-        return reinterpret_cast<void*>((basePtr - 1u + alignment) & -alignment);
-#endif
+        return reinterpret_cast<void*>((basePtr - 1u + alignment) & ~(alignment - 1));
     }
 
     inline uint8_t* PointerAlign(uint8_t* pointer)
@@ -609,8 +754,8 @@ namespace Core {
         std::transform(inplace.begin(), inplace.end(), inplace.begin(), ::tolower);
     }
 
-    string EXTERNAL Format(const TCHAR formatter[], ...);
-    void EXTERNAL Format(string& dst, const TCHAR format[], ...);
+    string EXTERNAL Format(const TCHAR formatter[], ...) PRINTF_FORMAT(1, 2);
+    void EXTERNAL Format(string& dst, const TCHAR format[], ...) PRINTF_FORMAT(2, 3);
     void EXTERNAL Format(string& dst, const TCHAR format[], va_list ap);
 
     const uint32_t infinite = -1;
@@ -620,27 +765,32 @@ namespace Core {
     public:
         template <typename... Args>
         inline Void(Args&&...) {}
-        inline Void(const Void&) {}
-        inline ~Void() {}
+        inline Void(const Void&) = default;
+        inline Void(Void&&) = default;
+        inline ~Void() = default;
 
-        inline Void& operator=(const Void&)
-        {
-            return (*this);
-        }
+        inline Void& operator=(const Void&) = default;
     };
 
     struct EXTERNAL IReferenceCounted {
-        virtual ~IReferenceCounted(){};
+        virtual ~IReferenceCounted() = default;
         virtual void AddRef() const = 0;
         virtual uint32_t Release() const = 0;
     };
 
-    struct EXTERNAL IUnknown : virtual public IReferenceCounted  {
-        enum { ID = 0x00000000 };
+    struct EXTERNAL IUnknown : public IReferenceCounted  {
+
+        enum : uint32_t {
+            ID_OFFSET_INTERNAL  = 0x00000000,
+            ID_OFFSET_PUBLIC    = 0x00000040,
+            ID_OFFSET_CUSTOM    = 0x80000000
+        };
+
+        enum { ID = (ID_OFFSET_INTERNAL + 0x0000) };
 
         ~IUnknown() override = default;
 
-        virtual void* QueryInterface(const uint32_t interfaceNummer) = 0;
+        virtual void* QueryInterface(const uint32_t interfaceNumber) = 0;
 
         template <typename REQUESTEDINTERFACE>
         REQUESTEDINTERFACE* QueryInterface()
@@ -660,13 +810,32 @@ namespace Core {
             const void* baseInterface(const_cast<IUnknown*>(this)->QueryInterface(REQUESTEDINTERFACE::ID));
 
             if (baseInterface != nullptr) {
-                return (reinterpret_cast<REQUESTEDINTERFACE*>(baseInterface));
+                return (reinterpret_cast<const REQUESTEDINTERFACE*>(baseInterface));
             }
 
             return (nullptr);
         }
     };
 
+    namespace memory_order {
+    #ifdef __WINDOWS__
+        static constexpr std::memory_order memory_order_relaxed = std::memory_order::memory_order_relaxed;
+        static constexpr std::memory_order memory_order_consume = std::memory_order::memory_order_seq_cst;
+        static constexpr std::memory_order memory_order_acquire = std::memory_order::memory_order_seq_cst;
+        static constexpr std::memory_order memory_order_release = std::memory_order::memory_order_release;
+        static constexpr std::memory_order memory_order_acq_rel = std::memory_order::memory_order_seq_cst;
+        static constexpr std::memory_order memory_order_seq_cst = std::memory_order::memory_order_seq_cst;
+    #else
+        static constexpr std::memory_order memory_order_relaxed = std::memory_order::memory_order_relaxed;
+        static constexpr std::memory_order memory_order_consume = std::memory_order::memory_order_consume;
+        static constexpr std::memory_order memory_order_acquire = std::memory_order::memory_order_acquire;
+        static constexpr std::memory_order memory_order_release = std::memory_order::memory_order_release;
+        static constexpr std::memory_order memory_order_acq_rel = std::memory_order::memory_order_acq_rel;
+        static constexpr std::memory_order memory_order_seq_cst = std::memory_order::memory_order_seq_cst;
+    #endif
+    }
+
+    #define COM_ERROR (0x80000000)
 
     #define ERROR_CODES \
         ERROR_CODE(ERROR_NONE, 0) \
@@ -714,7 +883,18 @@ namespace Core {
         ERROR_CODE(ERROR_UNAUTHENTICATED, 42) \
         ERROR_CODE(ERROR_NOT_EXIST, 43) \
         ERROR_CODE(ERROR_NOT_SUPPORTED, 44) \
-        ERROR_CODE(ERROR_INVALID_RANGE, 45)
+        ERROR_CODE(ERROR_INVALID_RANGE, 45) \
+        ERROR_CODE(ERROR_HIBERNATED, 46) \
+        ERROR_CODE(ERROR_INPROC, 47) \
+        ERROR_CODE(ERROR_FAILED_REGISTERED, 48) \
+        ERROR_CODE(ERROR_FAILED_UNREGISTERED, 49) \
+        ERROR_CODE(ERROR_PARSE_FAILURE, 50) \
+        ERROR_CODE(ERROR_PRIVILIGED_DEFERRED, 51) \
+        ERROR_CODE(ERROR_INVALID_ENVELOPPE, 52) \
+        ERROR_CODE(ERROR_UNKNOWN_METHOD, 53) \
+        ERROR_CODE(ERROR_INVALID_PARAMETER, 54) \
+        ERROR_CODE(ERROR_INTERNAL_JSONRPC, 55) \
+        ERROR_CODE(ERROR_PARSING_ENVELOPPE, 56)
 
     #define ERROR_CODE(CODE, VALUE) CODE = VALUE,
 
@@ -759,6 +939,19 @@ namespace Core {
 }
 }
 
+extern "C" {
+
+#ifdef __WINDOWS__
+extern int EXTERNAL inet_aton(const char* cp, struct in_addr* inp);
+extern void EXTERNAL usleep(const uint32_t value);
+#endif
+
+void EXTERNAL DumpCallStack(const ThreadId threadId, std::list<WPEFramework::Core::callstack_info>& stack);
+uint32_t EXTERNAL GetCallStack(const ThreadId threadId, void* addresses[], const uint32_t bufferSize);
+
+}
+
+
 #ifndef BUILD_REFERENCE
 #define BUILD_REFERENCE engineering_build_for_debug_purpose_only
 #endif
@@ -776,5 +969,7 @@ namespace std {
 }
 #endif
 #endif
+
+#define THUNDER_VERSION 5
 
 #endif // __PORTABILITY_H

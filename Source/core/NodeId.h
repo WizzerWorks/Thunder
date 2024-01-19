@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -107,6 +107,59 @@ namespace Core {
             struct sockaddr_hci BTSocket;
             struct bluetooth_extended L2Socket;
 #endif
+
+        public:
+            uint32_t Extension() const
+            {
+                switch (FamilyType) {
+                case AF_INET:
+                    return (IPV4Socket.in_protocol);
+                    break;
+
+                case AF_INET6:
+                    return(IPV6Socket.in_protocol);
+
+    #ifdef __CORE_BLUETOOTH_SUPPORT__
+                case AF_BLUETOOTH:
+                    return (L2Socket.l2_type);
+                    break;
+    #endif
+    #ifndef __WINDOWS__
+                case AF_NETLINK:
+                    return (NetlinkSocket.nl_destination);
+                    break;
+    #endif
+                default:
+                    break;
+                }
+
+                return (0);
+            }
+            void Extension(const uint32_t extension)
+            {
+                switch (FamilyType) {
+                case TYPE_IPV4:
+                    IPV4Socket.in_protocol = extension;
+                    break;
+
+                case TYPE_IPV6:
+                    IPV6Socket.in_protocol = extension;
+                    break;
+
+    #ifdef __CORE_BLUETOOTH_SUPPORT__
+                case AF_BLUETOOTH:
+                    L2Socket.l2_type = extension;
+                    break;
+    #endif
+    #ifndef __WINDOWS__
+            case AF_NETLINK:
+                    NetlinkSocket.nl_destination = extension;
+                    break;
+    #endif
+                default:
+                    break;
+                }
+            }
         };
 
         static bool IsIPV6Enabled()
@@ -150,32 +203,10 @@ namespace Core {
     public:
         inline uint32_t Extension() const
         {
-            switch(Type()) {
-             case TYPE_IPV4:
-                 return(m_structInfo.IPV4Socket.in_protocol);
-                 break;
-
-            case TYPE_IPV6:
-                 return(m_structInfo.IPV6Socket.in_protocol);
-                 break;
-       
-#ifdef __CORE_BLUETOOTH_SUPPORT__
-            case TYPE_BLUETOOTH:
-                 return(m_structInfo.L2Socket.l2_type);
-                 break;
-#endif
-#ifndef __WINDOWS__
-            case TYPE_NETLINK:
-                 return(m_structInfo.NetlinkSocket.nl_destination);
-                 break;
-#endif
-            default:
-                 break;
-            }
-
-            return (0);
+            return (m_structInfo.Extension());
         }
-        inline uint32_t Rights() const
+
+        inline uint16_t Rights() const
         {
 #ifndef __WINDOWS__
             return (Type() == TYPE_DOMAIN ? m_structInfo.DomainSocket.un_access : 0);
@@ -257,6 +288,10 @@ namespace Core {
         {
             return ((IsMulticast() == false) && (IsLocalInterface() == false) && (IsAnyInterface() == false));
         }
+        inline string Group() const
+        {
+            return (m_group);
+        }
 
         string HostName() const;
 
@@ -299,6 +334,7 @@ namespace Core {
             return (reinterpret_cast<struct sockaddr*>(&(m_structInfo)));
         }
 
+        string m_group;
         mutable string m_hostName;
         SocketInfo m_structInfo;
         static bool m_isIPV6Enabled;

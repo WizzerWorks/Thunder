@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,7 @@
  * limitations under the License.
  */
 
-#ifndef __WEBSOCKETLINK_H
-#define __WEBSOCKETLINK_H
+#pragma once
 
 #include "Module.h"
 #include "WebLink.h"
@@ -49,11 +48,11 @@ namespace Web {
                 CLOSE_INPROGRESS = 0x08
             };
 
+        public:
             Protocol() = delete;
             Protocol(const Protocol&) = delete;
             Protocol& operator=(const Protocol&) = delete;
-
-        public:
+            
             Protocol(const bool binary, const bool masking)
                 : _setFlags((masking ? 0x80 : 0x00) | (binary ? 0x02 : 0x01))
                 , _progressInfo(0)
@@ -61,6 +60,7 @@ namespace Web {
                 , _frameType(TEXT)
                 , _controlStatus(0)
             {
+                ::memset(_scrambleKey, 0, sizeof(_scrambleKey));
             }
             ~Protocol()
             {
@@ -70,57 +70,69 @@ namespace Web {
             std::string RequestKey() const;
             std::string ResponseKey(const std::string& requestKey) const;
 
-            inline void Ping()
+            void Ping()
             {
                 _controlStatus |= REQUEST_PING;
             }
-            inline void Pong()
+            void Pong()
             {
                 _controlStatus |= REQUEST_PONG;
             }
-            inline void Close()
+            void Close()
             {
                 _controlStatus |= REQUEST_CLOSE;
             }
-            inline bool ReceiveInProgress() const
+            bool ReceiveInProgress() const
             {
                 return ((_progressInfo & 0x80) != 0);
             }
-            inline bool SendInProgress() const
+            bool SendInProgress() const
             {
                 return ((_progressInfo & 0x40) != 0);
             }
-            inline bool IsCompleteMessage() const
+            bool IsCompleteMessage() const
             {
                 return (_pendingReceiveBytes == 0);
             }
-            inline void Flush()
+            void Flush()
             {
                 _pendingReceiveBytes = 0;
             }
-            inline WebSocket::Protocol::frameType FrameType() const
+            WebSocket::Protocol::frameType FrameType() const
             {
                 return (_frameType);
             }
-            inline void Binary(const bool binary)
+            void Binary(const bool binary)
             {
                 _setFlags = ((_setFlags & 0xFC) | (binary ? 0x02 : 0x01));
             }
-            inline bool Binary() const
+            bool Binary() const
             {
                 return ((_setFlags & 0x02) != 0);
             }
-            inline void Masking(const bool masking)
+            void Masking(const bool masking)
             {
                 _setFlags = (masking ? (_setFlags | 0x80) : (_setFlags & 0x7F));
             }
-            inline bool Masking() const
+            bool Masking() const
             {
                 return ((_setFlags & 0x80) != 0);
             }
 
             uint16_t Encoder(uint8_t* dataFrame, const uint16_t maxSendSize, const uint16_t usedSize);
             uint16_t Decoder(uint8_t* dataFrame, uint16_t& receivedSize);
+
+        private:
+            inline void GenerateMaskKey(uint8_t *maskKey)
+            {
+                uint32_t value;
+                // Generate a new mask value
+                Crypto::Random(value);
+                maskKey[0] = value & 0xFF;
+                maskKey[1] = (value >> 8) & 0xFF;
+                maskKey[2] = (value >> 16) & 0xFF;
+                maskKey[3] = (value >> 24) & 0xFF;
+            }
 
         private:
             uint8_t _setFlags;
@@ -169,18 +181,13 @@ namespace Web {
     template <typename LINK, typename INBOUND, typename OUTBOUND, typename ALLOCATOR>
     class WebSocketLinkType {
     public:
-        enum EnumlinkState {
+        enum EnumlinkState : uint8_t {
             WEBSERVER = 0x01,
             UPGRADING = 0x02,
             WEBSOCKET = 0x04,
             SUSPENDED = 0x08,
-            ACTIVITY = 0x10
+            ACTIVITY  = 0x10
         };
-
-    private:
-        WebSocketLinkType();
-        WebSocketLinkType(const WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& copy) = delete;
-        WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& operator=(const WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& RHS) = delete;
 
         typedef WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR> ParentClass;
 
@@ -206,12 +213,10 @@ namespace Web {
                     , _queue(queueSize)
                 {
                 }
-                virtual ~SerializerImpl()
-                {
-                }
+                virtual ~SerializerImpl() = default;
 
             public:
-                inline bool IsIdle() const
+                bool IsIdle() const
                 {
                     return (_queue.Count() == 0);
                 }
@@ -233,7 +238,7 @@ namespace Web {
 
                     return (result);
                 }
-                inline uint16_t Serialize(uint8_t stream[], const uint16_t maxLength)
+                uint16_t Serialize(uint8_t stream[], const uint16_t maxLength)
                 {
                     return (OUTBOUND::Serializer::Serialize(stream, maxLength));
                 }
@@ -273,7 +278,7 @@ namespace Web {
                     if (_parent._webSocketMessage == realItem) {
                         _parent.UpgradeCompleted();
                     } else {
-                        _parent.Serialized(Core::proxy_cast<OUTBOUND>(realItem));
+                        _parent.Serialized(Core::ProxyType<OUTBOUND>(realItem));
                     }
 
                     _adminLock.Lock();
@@ -314,12 +319,10 @@ namespace Web {
                     , _pool(allocator)
                 {
                 }
-                virtual ~DeserializerImpl()
-                {
-                }
+                virtual ~DeserializerImpl() = default;
 
             public:
-                inline bool IsIdle() const
+                bool IsIdle() const
                 {
                     return (_current.IsValid() == false);
                 }
@@ -358,319 +361,111 @@ namespace Web {
                 ALLOCATOR _pool;
             };
 
-        private:
+        public:
             HandlerType() = delete;
             HandlerType(const HandlerType<ACTUALLINK>&) = delete;
             HandlerType<ACTUALLINK>& operator=(const HandlerType<ACTUALLINK>&) = delete;
+            
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
+            template <typename... Args>
+            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Args&&... args)
+                : ACTUALLINK(std::forward<Args>(args)...)
+                , _handler(binary, masking)
+                , _parent(parent)
+                , _adminLock()
+                , _state(WEBSERVER)
+                , _serializerImpl(*this, queueSize)
+                , _deserialiserImpl(*this, queueSize)
+                , _path()
+                , _protocol()
+                , _query()
+                , _origin()
+                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
+                , _pingFireTime(0)
+            {
+            }
+            template <typename... Args>
+            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Args&&... args)
+                : ACTUALLINK(std::forward<Args>(args)...)
+                , _handler(binary, masking)
+                , _parent(parent)
+                , _adminLock()
+                , _state(WEBSERVER)
+                , _serializerImpl(*this, queueSize)
+                , _deserialiserImpl(*this, allocator)
+                , _path()
+                , _protocol()
+                , _query()
+                , _origin()
+                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
+                , _pingFireTime(0)
+            {
+            }
+POP_WARNING()
+            ~HandlerType() override = default;
 
         public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
-            template <typename Arg1>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1)
-                : ACTUALLINK(arg1)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
+            bool IsOpen() const
             {
+                return ((ACTUALLINK::IsOpen() == true) && ((State() & SUSPENDED) == 0));
             }
-            template <typename Arg1, typename Arg2>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2)
-                : ACTUALLINK(arg1, arg2)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
+            bool IsSuspended() const
             {
+                return ((ACTUALLINK::IsSuspended() == true) || ((State() & SUSPENDED) != 0));
             }
-            template <typename Arg1, typename Arg2, typename Arg3>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-                : ACTUALLINK(arg1, arg2, arg3)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-                : ACTUALLINK(arg1, arg2, arg3, arg4)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-                : ACTUALLINK(arg1, arg2, arg3, arg4, arg5)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-                : ACTUALLINK(arg1, arg2, arg3, arg4, arg5, arg6)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-                : ACTUALLINK(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, queueSize)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1)
-                : ACTUALLINK(arg1)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2)
-                : ACTUALLINK(arg1, arg2)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-                : ACTUALLINK(arg1, arg2, arg3)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-                : ACTUALLINK(arg1, arg2, arg3, arg4)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-                : ACTUALLINK(arg1, arg2, arg3, arg4, arg5)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-                : ACTUALLINK(arg1, arg2, arg3, arg4, arg5, arg6)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-            HandlerType(ParentClass& parent, const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-                : ACTUALLINK(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-                , _handler(binary, masking)
-                , _parent(parent)
-                , _adminLock()
-                , _state(WEBSERVER)
-                , _serializerImpl(*this, queueSize)
-                , _deserialiserImpl(*this, allocator)
-                , _path()
-                , _protocol()
-                , _query()
-                , _origin()
-                , _webSocketMessage(Core::ProxyType<typename OUTBOUND::BaseElement>::Create())
-                , _pingFireTime(0)
-            {
-            }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-
-            virtual ~HandlerType()
-            {
-            }
-
-        public:
-            inline bool IsOpen() const
-            {
-                return ((ACTUALLINK::IsOpen() == true) && ((_state & SUSPENDED) == 0));
-            }
-            inline bool IsSuspended() const
-            {
-                return ((ACTUALLINK::IsSuspended() == true) || ((_state & SUSPENDED) != 0));
-            }
-            inline bool IsClosed() const
+            bool IsClosed() const
             {
                 return (ACTUALLINK::IsClosed() == true);
             }
-            inline bool IsWebServer() const
+            bool IsWebServer() const
             {
-                return ((_state & WEBSERVER) != 0);
+                return ((State() & WEBSERVER) != 0);
             }
-            inline bool IsUpgrading() const
+            bool IsUpgrading() const
             {
-                return ((_state & UPGRADING) != 0);
+                return ((State() & UPGRADING) != 0);
             }
-            inline bool IsWebSocket() const
+            bool IsWebSocket() const
             {
-                return ((_state & WEBSOCKET) != 0);
+                return ((State() & WEBSOCKET) != 0);
             }
-            inline bool IsCompleted() const
+            bool IsCompleted() const
             {
                 return (_handler.ReceiveInProgress() == false);
             }
-            inline const string& Path() const
+            const string& Path() const
             {
                 return (_path);
             }
-            inline const string& Protocol() const
+            const ProtocolsArray& Protocols() const
             {
                 return (_protocol);
             }
-            inline const string& Query() const
+            void Protocols(const ProtocolsArray& protocols)
+            {
+                _protocol = protocols;
+            }
+            const string& Query() const
             {
                 return (_query);
             }
-            inline const string& Origin() const
+            const string& Origin() const
             {
                 return (_origin);
             }
-            inline void Binary(const bool binary)
+            void Binary(const bool binary)
             {
                 _handler.Binary(binary);
             }
-            inline bool Binary() const
+            bool Binary() const
             {
                 return (_handler.Binary());
             }
-            inline void Masking(const bool masking)
+            void Masking(const bool masking)
             {
                 _handler.Masking(masking);
             }
-            inline void Ping()
+            void Ping()
             {
                 _pingFireTime = Core::Time::Now().Ticks();
 
@@ -682,21 +477,21 @@ namespace Web {
 
                 ACTUALLINK::Trigger();
             }
-            inline bool Masking() const
+            bool Masking() const
             {
                 return (_handler.Masking());
             }
-            inline bool Upgrade(const string& protocol, const string& path)
+            bool Upgrade(const string& protocol, const string& path)
             {
                 string empty;
 
                 return (UpgradeToWebSocket(protocol, path, empty, ACTUALLINK::LocalId(), TemplateIntToType<Core::TypeTraits::same_or_inherits<Web::Request, INBOUND>::value>()));
             }
-            inline bool Upgrade(const string& protocol, const string& path, const string& query, const string& origin)
+            bool Upgrade(const string& protocol, const string& path, const string& query, const string& origin)
             {
                 return (UpgradeToWebSocket(protocol, path, query, origin, TemplateIntToType<Core::TypeTraits::same_or_inherits<Web::Request, INBOUND>::value>()));
             }
-            inline void AbortUpgrade(const Web::WebStatus status, const string& reason)
+            void AbortUpgrade(const Web::WebStatus status, const string& reason)
             {
                 // Do not return SWITCH if you would like to abort !!!!!
                 ASSERT(status != Web::STATUS_SWITCH_PROTOCOL);
@@ -704,7 +499,7 @@ namespace Web {
                 _webSocketMessage->ErrorCode = status;
                 _webSocketMessage->Message = reason;
             }
-            inline void Submit(const Core::ProxyType<OUTBOUND>& element)
+            void Submit(const Core::ProxyType<OUTBOUND>& element)
             {
                 _adminLock.Lock();
 
@@ -717,20 +512,20 @@ namespace Web {
                     _adminLock.Unlock();
                 }
             }
-            inline uint32_t Close(const uint32_t waitTime)
+            uint32_t Close(const uint32_t waitTime)
             {
                 uint32_t result = 0;
 
                 _adminLock.Lock();
 
                 if (IsSuspended() == false) {
-                    if ((_state & WEBSOCKET) != 0) {
+                    if ((State() & WEBSOCKET) != 0) {
                         // Send out a close message
                         // TODO: Creat a message we can SEND
                     }
 
                     // Do not accept any new messages.
-                    _state = static_cast<EnumlinkState>(_state | SUSPENDED);
+                    _state |= SUSPENDED;
                 }
 
                 _adminLock.Unlock();
@@ -741,19 +536,19 @@ namespace Web {
             }
 
             // Methods to extract and insert data into the socket buffers
-            virtual uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize)
+            uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize) override
             {
                 uint16_t result = 0;
 
                 _adminLock.Lock();
 
-                _state = static_cast<EnumlinkState>(_state | ACTIVITY);
+                _state |= ACTIVITY;
 
                 if ((_state & WEBSOCKET) != 0) {
-                    if (maxSendSize > 4) {
-                        result = _parent.SendData(&(dataFrame[4]), (maxSendSize - 4));
+                    if (maxSendSize > 8) {
+                        result = _parent.SendData(&(dataFrame[4]), (maxSendSize - 8));
 
-                        result = _handler.Encoder(dataFrame, (maxSendSize - 4), result);
+                        result = _handler.Encoder(dataFrame, (maxSendSize - 8), result);
                     }
                 } else {
                     result = _serializerImpl.Serialize(dataFrame, maxSendSize);
@@ -767,13 +562,13 @@ namespace Web {
 
                 return (result);
             }
-            virtual uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize)
+            uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize) override
             {
                 uint16_t result = 0;
 
                 _adminLock.Lock();
 
-                _state = static_cast<EnumlinkState>(_state | ACTIVITY);
+                _state |= ACTIVITY;
 
                 if ((_state & WEBSOCKET) != 0) {
                     bool tooSmall = false;
@@ -782,6 +577,7 @@ namespace Web {
                     while ((result < receivedSize) && (tooSmall == false)) {
                         uint16_t actualDataSize = receivedSize - result;
                         uint16_t headerSize = _handler.Decoder(const_cast<uint8_t*>(&dataFrame[result]), actualDataSize);
+                        uint64_t payloadSizeInControlFrame;
 
                         tooSmall = ((headerSize == 0) && (actualDataSize == 0));
 
@@ -825,7 +621,30 @@ namespace Web {
                                     _commandData.clear();
                                 }
 
-                                result += headerSize; // actualDataSize
+                                payloadSizeInControlFrame = 0;
+                                // skip payload bytes for control frames:
+                                if (headerSize > 1) {
+                                   payloadSizeInControlFrame = dataFrame[result+1] & 0x7F;
+                                   if (payloadSizeInControlFrame == 126) {
+				       if (headerSize > 3) {
+                                         payloadSizeInControlFrame = ((dataFrame[result+2] << 8) + dataFrame[result+3]);
+				       } else {
+                                         TRACE_L1("Header too small for 16-bit extended payload size");
+                                         payloadSizeInControlFrame = 0;
+                                      }
+                                   } else if (payloadSizeInControlFrame == 127) {
+                                      if (headerSize > 9) {
+                                         payloadSizeInControlFrame = dataFrame[result+9];
+                                         for (int i=8; i>=2; i--) payloadSizeInControlFrame = (payloadSizeInControlFrame << 8) + dataFrame[result+i];
+                                      } else {
+                                         TRACE_L1("Header too small for 64-bit jumbo payload size ");
+                                         payloadSizeInControlFrame = 0;
+                                      }
+                                   }
+                                }
+
+                                result += static_cast<uint16_t>(headerSize + payloadSizeInControlFrame); // actualDataSize
+
                             } else {
                                 _parent.ReceiveData(&(dataFrame[result + headerSize]), actualDataSize);
 
@@ -847,7 +666,7 @@ namespace Web {
             }
 
             // Signal a state change, Opened, Closed, Accepted or Error
-            virtual void StateChange()
+            void StateChange() override
             {
                 _adminLock.Lock();
 
@@ -861,18 +680,34 @@ namespace Web {
                 _adminLock.Unlock();
             }
 
-            inline void ResetActivity()
+            void ResetActivity()
             {
-                _state = static_cast<EnumlinkState>(_state & (~ACTIVITY));
+                Core::SafeSyncType<Core::CriticalSection> lock(_adminLock);
+
+                _state &= ~ACTIVITY;
             }
 
-            inline bool HasActivity() const
+            bool HasActivity() const
             {
+                Core::SafeSyncType<Core::CriticalSection> lock(_adminLock);
+
                 return ((_state & ACTIVITY) != 0);
             }
 
+            void Lock() const {
+                _adminLock.Lock();
+            }
+
+            void Unlock() const {
+                _adminLock.Unlock();
+            }
+
         private:
-            inline uint32_t CheckForClose(uint32_t waitTime)
+            inline uint16_t State() const
+            {
+                return (_state.load(Core::memory_order::memory_order_relaxed));
+            }
+            uint32_t CheckForClose(uint32_t waitTime)
             {
                 uint32_t result = 0;
 
@@ -899,21 +734,21 @@ namespace Web {
 
                 return (result);
             }
-            inline void Serialized(const Core::ProxyType<OUTBOUND>& element)
+            void Serialized(const Core::ProxyType<OUTBOUND>& element)
             {
-                _parent.Send(Core::proxy_cast<OUTBOUND>(element));
+                _parent.Send(Core::ProxyType<OUTBOUND>(element));
             }
-            inline void Deserialized(Core::ProxyType<INBOUND>& element)
+            void Deserialized(Core::ProxyType<INBOUND>& element)
             {
                 ReceivedWebSocket(element, TemplateIntToType<Core::TypeTraits::same_or_inherits<Web::Request, INBOUND>::value>());
             }
-            inline bool LinkBody(Core::ProxyType<INBOUND>& element)
+            bool LinkBody(Core::ProxyType<INBOUND>& element)
             {
                 _parent.LinkBody(element);
 
                 return (element->HasBody());
             }
-            inline void UpgradeCompleted()
+            void UpgradeCompleted()
             {
                 UpgradeCompleted(TemplateIntToType<Core::TypeTraits::same_or_inherits<Web::Request, INBOUND>::value>());
             }
@@ -921,14 +756,14 @@ namespace Web {
             // ----------------------------------------------------------------------------------------------
             // SERVER upgrade to WebSocket, Diffrentiation via compiletime type: const TemplateIntToType<1>&
             // ----------------------------------------------------------------------------------------------
-            inline bool UpgradeToWebSocket(const string& /* protocol */, const string& /* path */, const string& /* query */, const string& /* origin */, const TemplateIntToType<1>& /* For compile time diffrentiation */)
+            bool UpgradeToWebSocket(const string& /* protocol */, const string& /* path */, const string& /* query */, const string& /* origin */, const TemplateIntToType<1>& /* For compile time diffrentiation */)
             {
                 // Servers can not upgrade to websockets
                 ASSERT(false);
 
                 return (false);
             }
-            inline void ReceivedWebSocket(Core::ProxyType<INBOUND>& element, const TemplateIntToType<1>& /* For compile time diffrentiation */)
+            void ReceivedWebSocket(Core::ProxyType<INBOUND>& element, const TemplateIntToType<1>& /* For compile time diffrentiation */)
             {
                 // we are still in the accepting mode
                 if ((element->Upgrade.IsSet()) && (element->Upgrade.Value() == Request::UPGRADE_WEBSOCKET) && (element->Connection.IsSet()) && (element->Connection.Value() == Request::CONNECTION_UPGRADE)) {
@@ -954,16 +789,18 @@ namespace Web {
                         _parent.StateChange();
 
                         if (_webSocketMessage->ErrorCode != Web::STATUS_SWITCH_PROTOCOL) {
-                            _state = static_cast<EnumlinkState>((_state & 0xF0) | WEBSERVER);
+                            _state = (_state & 0xF0) | WEBSERVER;
                             _path.clear();
                             _query.clear();
-                            _protocol.clear();
+                            _protocol.Clear();
                         } else {
                             _webSocketMessage->Connection = Web::Response::CONNECTION_UPGRADE;
                             _webSocketMessage->Upgrade = Web::Response::UPGRADE_WEBSOCKET;
                             _webSocketMessage->WebSocketAccept = _handler.ResponseKey(element->WebSocketKey.Value());
-                            if (_protocol.empty() == false) {
-                                _webSocketMessage->WebSocketProtocol = _protocol;
+                            if (_protocol.Empty() == false) {
+                                //only one protocol should be selected
+                                ASSERT(_protocol.Size() == 1);
+                                _webSocketMessage->WebSocketProtocol = _protocol.First();
                             }
                         }
                     }
@@ -978,7 +815,7 @@ namespace Web {
                     _parent.Received(element);
                 }
             }
-            inline void UpgradeCompleted(const TemplateIntToType<1>& /* For compile time diffrentiation */)
+            void UpgradeCompleted(const TemplateIntToType<1>& /* For compile time diffrentiation */)
             {
                 // We send back the response on what we upgraded, Assuming it was succesfull, we are upgraded.
                 if (_webSocketMessage->ErrorCode == Web::STATUS_SWITCH_PROTOCOL) {
@@ -986,7 +823,7 @@ namespace Web {
 
                     _adminLock.Lock();
 
-                    _state = static_cast<EnumlinkState>((_state & 0xF0) | WEBSOCKET);
+                    _state = (_state & 0xF0) | WEBSOCKET;
 
                     _parent.StateChange();
 
@@ -997,7 +834,7 @@ namespace Web {
             // ----------------------------------------------------------------------------------------------
             // CLIENT upgrade to WebSocket, Diffrentiation via compiletime type: const TemplateIntToType<0>&
             // ----------------------------------------------------------------------------------------------
-            inline bool UpgradeToWebSocket(const string& protocol, const string& path, const string& query, const string& origin, const TemplateIntToType<0>& /* For compile time diffrentiation */)
+            bool UpgradeToWebSocket(const string& protocol, const string& path, const string& query, const string& origin, const TemplateIntToType<0>& /* For compile time diffrentiation */)
             {
                 bool result = false;
 
@@ -1005,7 +842,7 @@ namespace Web {
 
                 if ((_state & WEBSERVER) != 0) {
                     result = true;
-                    _state = static_cast<EnumlinkState>((_state & 0xF0) | UPGRADING);
+                    _state = (_state & 0xF0) | UPGRADING;
                     _origin = (origin.empty() ? ACTUALLINK::LocalId() : origin);
 
                     _webSocketMessage->Verb = Web::Request::HTTP_GET;
@@ -1024,12 +861,12 @@ namespace Web {
                         _webSocketMessage->Query = query;
                     }
                     if (protocol.empty() == false) {
-                        _webSocketMessage->WebSocketProtocol = protocol;
+                        _webSocketMessage->WebSocketProtocol = Web::ProtocolsArray(protocol);
                     }
 
                     _query = query;
                     _path = path;
-                    _protocol = protocol;
+                    _protocol = Web::ProtocolsArray(protocol);
 
                     _serializerImpl.Submit(_webSocketMessage);
                     ACTUALLINK::Trigger();
@@ -1039,11 +876,11 @@ namespace Web {
 
                 return (result);
             }
-            inline void UpgradeCompleted(const TemplateIntToType<0>& /* For compile time diffrentiation */)
+            void UpgradeCompleted(const TemplateIntToType<0>& /* For compile time diffrentiation */)
             {
                 // We send out the request to upgrade. So what wait for the answer...
             }
-            inline void ReceivedWebSocket(Core::ProxyType<INBOUND>& element, const TemplateIntToType<0>& /* For compile time diffrentiation */)
+            void ReceivedWebSocket(Core::ProxyType<INBOUND>& element, const TemplateIntToType<0>& /* For compile time diffrentiation */)
             {
                 // We might receive a response on the update request
                 if ((_webSocketMessage.IsValid() == true) && (element->ErrorCode == Web::STATUS_SWITCH_PROTOCOL) && (element->WebSocketAccept.Value() == _handler.ResponseKey(_webSocketMessage->WebSocketKey.Value()))) {
@@ -1052,11 +889,18 @@ namespace Web {
                     _adminLock.Lock();
 
                     // Seems like we succeeded, turn on the link..
-                    _state = static_cast<EnumlinkState>((_state & 0xF0) | WEBSOCKET);
+                    _state = (_state & 0xF0) | WEBSOCKET;
 
                     _parent.StateChange();
 
                     _adminLock.Unlock();
+
+                    ACTUALLINK::Trigger();
+                } else if ((_webSocketMessage.IsValid() == true) && (element->ErrorCode == Web::STATUS_FORBIDDEN)) {
+                    ASSERT((_state & UPGRADING) != 0);
+
+                    // Not allowed websocket
+                    Close(0);
                 } else {
                     _parent.Received(element);
                 }
@@ -1065,12 +909,12 @@ namespace Web {
         private:
             WebSocket::Protocol _handler;
             ParentClass& _parent;
-            Core::CriticalSection _adminLock;
-            EnumlinkState _state;
+            mutable Core::CriticalSection _adminLock;
+            std::atomic<uint8_t> _state;
             SerializerImpl _serializerImpl;
             DeserializerImpl _deserialiserImpl;
             string _path;
-            string _protocol;
+            ProtocolsArray _protocol;
             string _query;
             string _origin;
             string _commandData;
@@ -1079,198 +923,163 @@ namespace Web {
         };
 
     public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
-        template <typename Arg1>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1)
-            : _channel(*this, binary, masking, queueSize, arg1)
-        {
-        }
-        template <typename Arg1, typename Arg2>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2)
-            : _channel(*this, binary, masking, queueSize, arg1, arg2)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-            : _channel(*this, binary, masking, queueSize, arg1, arg2, arg3)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-            : _channel(*this, binary, masking, queueSize, arg1, arg2, arg3, arg4)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-            : _channel(*this, binary, masking, queueSize, arg1, arg2, arg3, arg4, arg5)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-            : _channel(*this, binary, masking, queueSize, arg1, arg2, arg3, arg4, arg5, arg6)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-            : _channel(*this, binary, masking, queueSize, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-        {
-        }
-        template <typename Arg1>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1)
-        {
-        }
-        template <typename Arg1, typename Arg2>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1, arg2)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1, arg2, arg3)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1, arg2, arg3, arg4)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1, arg2, arg3, arg4, arg5)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1, arg2, arg3, arg4, arg5, arg6)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-            : _channel(*this, binary, masking, queueSize, allocator, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-        {
-        }
+        WebSocketLinkType() = delete;
+        WebSocketLinkType(const WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& copy) = delete;
+        WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& operator=(const WebSocketLinkType<LINK, INBOUND, OUTBOUND, ALLOCATOR>& RHS) = delete;
 
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-
-        virtual ~WebSocketLinkType()
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
+        template <typename... Args>
+        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, Args&&... args)
+            : _channel(*this, binary, masking, queueSize, std::forward<Args>(args)...)
         {
         }
+        template <typename... Args>
+        WebSocketLinkType(const bool binary, const bool masking, const uint8_t queueSize, ALLOCATOR allocator, Args&&... args)
+            : _channel(*this, binary, masking, queueSize, allocator, std::forward<Args>(args)...)
+        {
+        }
+POP_WARNING()
+        virtual ~WebSocketLinkType() = default;
 
     public:
-        inline LINK& Link()
+        LINK& Link()
         {
             return (_channel);
         }
-        inline const LINK& Link() const
+        const LINK& Link() const
         {
             return (_channel);
         }
-        inline string RemoteId() const
+        string RemoteId() const
         {
             return (_channel.RemoteId());
         }
-        inline string LocalId() const
+        string LocalId() const
         {
             return (_channel.LocalId());
         }
-        inline bool IsOpen() const
+        bool IsOpen() const
         {
             return (_channel.IsOpen());
         }
-        inline bool IsSuspended() const
+        bool IsSuspended() const
         {
             return (_channel.IsSuspended());
         }
-        inline bool IsClosed() const
+        bool IsClosed() const
         {
             return (_channel.IsClosed());
         }
-        inline bool IsWebServer() const
+        bool IsWebServer() const
         {
             return (_channel.IsWebServer());
         }
-        inline bool IsUpgrading() const
+        bool IsUpgrading() const
         {
             return (_channel.IsUpgrading());
         }
-        inline bool IsWebSocket() const
+        bool IsWebSocket() const
         {
             return (_channel.IsWebSocket());
         }
-        inline bool IsCompleted() const
+        bool IsCompleted() const
         {
             return (_channel.IsCompleted());
         }
-        inline void Binary(const bool binary)
+        void Binary(const bool binary)
         {
             _channel.Binary(binary);
         }
-        inline bool Binary() const
+        bool Binary() const
         {
             return (_channel.Binary());
         }
-        inline void Masking(const bool masking)
+        void Masking(const bool masking)
         {
             _channel.Masking(masking);
         }
-        inline bool Masking() const
+        bool Masking() const
         {
             return (_channel.Masking());
         }
-        inline void ResetActivity()
+        void ResetActivity()
         {
             return (_channel.ResetActivity());
         }
-        inline bool HasActivity() const
+        bool HasActivity() const
         {
             return (_channel.HasActivity());
         }
-        inline const string& Path() const
+        const string& Path() const
         {
             return (_channel.Path());
         }
-        inline const string& Query() const
+        const string& Query() const
         {
             return (_channel.Query());
         }
-        inline const string& Protocol() const
+        const ProtocolsArray& Protocols() const
         {
-            return (_channel.Protocol());
+            return (_channel.Protocols());
         }
-        inline bool Upgrade(const string& protocol, const string& path, const string& query, const string& origin)
+        void Protocols(const ProtocolsArray& protocols)
+        {
+            _channel.Protocols(protocols);
+        }
+        bool Upgrade(const string& protocol, const string& path, const string& query, const string& origin)
         {
             return (_channel.Upgrade(protocol, path, query, origin));
         }
-        inline void AbortUpgrade(const Web::WebStatus status, const string& reason)
+        void AbortUpgrade(const Web::WebStatus status, const string& reason)
         {
             return (_channel.AbortUpgrade(status, reason));
         }
-        inline uint32_t Open(const uint32_t waitTime)
+        uint32_t WaitForLink(const uint32_t time) const
         {
-            return (_channel.Open(waitTime));
+            // Make sure the state does not change in the mean time.
+            Lock();
+
+            uint32_t waiting = (time == Core::infinite ? Core::infinite : time); // Expect time in MS.
+
+            // Right, a wait till connection is closed is requested..
+            while ((waiting > 0) && (IsWebSocket() == false)) {
+                uint32_t sleepSlot = (waiting > SLEEPSLOT_POLLING_TIME ? SLEEPSLOT_POLLING_TIME : waiting);
+
+                Unlock();
+                // Right, lets sleep in slices of 100 ms
+                SleepMs(sleepSlot);
+                Lock();
+
+                waiting -= (waiting == Core::infinite ? 0 : sleepSlot);
+            }
+
+            uint32_t result = (((time == 0) || (IsWebSocket() == true)) ? Core::ERROR_NONE : Core::ERROR_TIMEDOUT);
+            Unlock();
+            return (result);
         }
-        inline uint32_t Close(const uint32_t waitTime)
+        uint32_t Open(const uint32_t waitTime)
+        {
+            _channel.Open(0);
+
+            return WaitForLink(waitTime);
+        }
+        uint32_t Close(const uint32_t waitTime)
         {
             return (_channel.Close(waitTime));
         }
-        inline void Ping()
+        void Ping()
         {
             _channel.Ping();
         }
-        inline void Trigger()
+        void Trigger()
         {
             _channel.Trigger();
         }
-        inline void Flush()
+        void Flush()
         {
             _channel.Flush();
         }
-        inline void Submit(Core::ProxyType<OUTBOUND> element)
+        void Submit(Core::ProxyType<OUTBOUND> element)
         {
             _channel.Submit(element);
         }
@@ -1282,6 +1091,14 @@ namespace Web {
         virtual uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize) = 0;
         virtual void StateChange() = 0;
         virtual bool IsIdle() const = 0;
+
+    protected:
+        void Lock() const {
+            _channel.Lock();
+        }
+        void Unlock() const {
+            _channel.Unlock();
+        }
 
     private:
         HandlerType<LINK> _channel;
@@ -1297,111 +1114,40 @@ namespace Web {
         private:
             typedef WebSocketLinkType<ACTUALLINK, Web::Response, Web::Request, WebSocket::ResponseAllocator&> BaseClass;
 
-            Handler();
-            Handler(const Handler<ACTUALLINK>& copy);
-            Handler<ACTUALLINK>& operator=(const Handler<ACTUALLINK>& RHS);
+        public:
+            Handler() = delete;
+            Handler(const Handler<ACTUALLINK>& copy) = delete;
+            Handler<ACTUALLINK>& operator=(const Handler<ACTUALLINK>& RHS) = delete;
+
+            template <typename... Args>
+            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Args&&... args)
+                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), std::forward<Args>(args)...)
+                , _parent(parent)
+                , _path(path)
+                , _protocol(protocol)
+                , _query(query)
+                , _origin(origin)
+            {
+            }
+            ~Handler() override = default;
 
         public:
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance())
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1, typename Arg2>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1, arg2)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1, arg2, arg3)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1, arg2, arg3, arg4)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1, arg2, arg3, arg4, arg5)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1, arg2, arg3, arg4, arg5, arg6)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-            Handler(ThisClass& parent, const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-                : BaseClass(binary, masking, 1, WebSocket::ResponseAllocator::Instance(), arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-                , _parent(parent)
-                , _path(path)
-                , _protocol(protocol)
-                , _query(query)
-                , _origin(origin)
-            {
-            }
-            ~Handler()
-            {
-            }
-
-        public:
-            virtual uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize)
+            uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize) override
             {
                 return (_parent.SendData(dataFrame, maxSendSize));
             }
-            virtual uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize)
+            uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize) override
             {
                 return (_parent.ReceiveData(dataFrame, receivedSize));
             }
 
         private:
-            virtual bool IsIdle() const
+            bool IsIdle() const override
             {
                 return (_parent.IsIdle());
             }
             // Signal a state change, Opened, Closed or Accepted
-            virtual void StateChange()
+            void StateChange() override
             {
                 _parent.StateChange();
 
@@ -1409,17 +1155,17 @@ namespace Web {
                     BaseClass::Upgrade(_protocol, _path, _query, _origin);
                 }
             }
-            virtual void Received(Core::ProxyType<Web::Response>& text)
+            void Received(Core::ProxyType<Web::Response>& text) override
             {
                 // This is a pure WebSocket, no web responses !!!!
                 TRACE_L1("Received a response(full) on a Websocket (%d)", 0);
             }
-            virtual void Send(const Core::ProxyType<Web::Request>& text)
+            void Send(const Core::ProxyType<Web::Request>& text) override
             {
                 // This is a pure WebSocket, no web responses !!!!
                 ASSERT(false);
             }
-            virtual void LinkBody(Core::ProxyType<Web::Response>& element)
+            void LinkBody(Core::ProxyType<Web::Response>& element) override
             {
                 // This is a pure WebSocket, no web requests !!!!
                 TRACE_L1("Received a response(full) on a Websocket (%d)", 0);
@@ -1433,131 +1179,91 @@ namespace Web {
             string _origin;
         };
 
-    private:
+    public:
         WebSocketClientType() = delete;
         WebSocketClientType(const WebSocketClientType<LINK>& copy) = delete;
         WebSocketClientType<LINK>& operator=(const WebSocketClientType<LINK>& RHS) = delete;
 
-    public:
-#ifdef __WINDOWS__
-#pragma warning(disable : 4355)
-#endif
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking)
-            : _channel(*this, path, protocol, query, origin, binary, masking)
+PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
+        template <typename... Args>
+        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Args&&... args)
+            : _channel(*this, path, protocol, query, origin, binary, masking, std::forward<Args>(args)...)
         {
         }
-        template <typename Arg1>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1)
-        {
-        }
-        template <typename Arg1, typename Arg2>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1, arg2)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1, arg2, arg3)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1, arg2, arg3, arg4)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1, arg2, arg3, arg4, arg5)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1, arg2, arg3, arg4, arg5, arg6)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-        WebSocketClientType(const string& path, const string& protocol, const string& query, const string& origin, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-            : _channel(*this, path, protocol, query, origin, binary, masking, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-        {
-        }
-#ifdef __WINDOWS__
-#pragma warning(default : 4355)
-#endif
-        virtual ~WebSocketClientType()
-        {
-        }
+POP_WARNING()
+
+        virtual ~WebSocketClientType() = default;
 
     public:
-        inline LINK& Link()
+        LINK& Link()
         {
             return (_channel.Link());
         }
-        inline const LINK& Link() const
+        const LINK& Link() const
         {
             return (_channel.Link());
         }
-        inline bool IsOpen() const
+        bool IsOpen() const
         {
-            return (_channel.IsOpen());
+            return ( (_channel.IsOpen()) && (_channel.IsWebSocket()) );
         }
-        inline bool IsClosed() const
+        bool IsClosed() const
         {
             return (_channel.IsClosed());
         }
-        inline bool IsWebServer() const
+        bool IsWebServer() const
         {
             return (_channel.IsWebServer());
         }
-        inline bool IsWebSocket() const
+        bool IsWebSocket() const
         {
             return (_channel.IsWebSocket());
         }
-        inline bool IsUpgrading() const
+        bool IsUpgrading() const
         {
             return (_channel.IsUpgrading());
         }
-        inline bool IsSuspended() const
+        bool IsSuspended() const
         {
             return (_channel.IsSuspended());
         }
-        inline bool IsCompleted() const
+        bool IsCompleted() const
         {
             return (_channel.IsCompleted());
         }
-        inline void Binary(const bool binary)
+        void Binary(const bool binary)
         {
             _channel.Binary(binary);
         }
-        inline bool Binary() const
+        bool Binary() const
         {
             return (_channel.Binary());
         }
-        inline void Masking(const bool masking)
+        void Masking(const bool masking)
         {
             _channel.Masking(masking);
         }
-        inline bool Masking() const
+        bool Masking() const
         {
             return (_channel.Masking());
         }
-        inline uint32_t Open(const uint32_t waitTime)
+        uint32_t Open(const uint32_t waitTime)
         {
             return (_channel.Open(waitTime));
         }
-        inline uint32_t Close(const uint32_t waitTime)
+        uint32_t Close(const uint32_t waitTime)
         {
             return (_channel.Close(waitTime));
         }
-        inline void Trigger()
+        void Trigger()
         {
             _channel.Trigger();
         }
-        inline string LocalId() const
+        string LocalId() const
         {
             return (_channel.LocalId());
         }
-        inline void Ping()
+        void Ping()
         {
             _channel.Ping();
         }
@@ -1581,93 +1287,50 @@ namespace Web {
         private:
             typedef WebSocketLinkType<ACTUALLINK, Web::Request, Web::Response, WebSocket::RequestAllocator&> BaseClass;
 
+        public:
             Handler() = delete;
             Handler(const Handler<ACTUALLINK>& copy) = delete;
             Handler<ACTUALLINK>& operator=(const Handler<ACTUALLINK>& RHS) = delete;
 
-        public:
-            Handler(ThisClass& parent, const bool binary, const bool masking)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance())
+            template <typename... Args>
+            Handler(ThisClass& parent, const bool binary, const bool masking, Args&&... args)
+                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), std::forward<Args>(args)...)
                 , _parent(parent)
             {
             }
-            template <typename Arg1>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1)
-                , _parent(parent)
-            {
-            }
-            template <typename Arg1, typename Arg2>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1, arg2)
-                , _parent(parent)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1, arg2, arg3)
-                , _parent(parent)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1, arg2, arg3, arg4)
-                , _parent(parent)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1, arg2, arg3, arg4, arg5)
-                , _parent(parent)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1, arg2, arg3, arg4, arg5, arg6)
-                , _parent(parent)
-            {
-            }
-            template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-            Handler(ThisClass& parent, const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-                : BaseClass(binary, masking, 1, WebSocket::RequestAllocator::Instance(), arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-                , _parent(parent)
-            {
-            }
-            ~Handler()
-            {
-            }
+            ~Handler() override = default;
 
         public:
-            virtual uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize)
+            uint16_t SendData(uint8_t* dataFrame, const uint16_t maxSendSize) override
             {
                 return (_parent.SendData(dataFrame, maxSendSize));
             }
-            virtual uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize)
+            uint16_t ReceiveData(uint8_t* dataFrame, const uint16_t receivedSize) override
             {
                 return (_parent.ReceiveData(dataFrame, receivedSize));
             }
 
         private:
-            virtual bool IsIdle() const
+            bool IsIdle() const override
             {
                 return (_parent.IsIdle());
             }
             // Signal a state change, Opened, Closed or Accepted
-            virtual void StateChange()
+            void StateChange() override
             {
                 _parent.StateChange();
             }
-            virtual void Received(Core::ProxyType<Web::Request>& text)
+            void Received(Core::ProxyType<Web::Request>& text) override
             {
                 // This is a pure WebSocket, no web responses !!!!
                 TRACE_L1("Received a request(full) on a Websocket (%d)", 0);
             }
-            virtual void Send(const Core::ProxyType<Web::Response>& text)
+            void Send(const Core::ProxyType<Web::Response>& text) override
             {
                 // This is a pure WebSocket, no web responses !!!!
                 ASSERT(false);
             }
-            virtual void LinkBody(Core::ProxyType<Web::Request>& element)
+            void LinkBody(Core::ProxyType<Web::Request>& element) override
             {
                 // This is a pure WebSocket, no web requests !!!!
                 TRACE_L1("Received a request(body) on a Websocket (%d)", 0);
@@ -1677,125 +1340,88 @@ namespace Web {
             ThisClass& _parent;
         };
 
-    private:
-        WebSocketServerType();
-        WebSocketServerType(const WebSocketServerType<LINK>& copy);
-        WebSocketServerType<LINK>& operator=(const WebSocketServerType<LINK>& RHS);
+    public:
+        WebSocketServerType() = delete;
+        WebSocketServerType(const WebSocketServerType<LINK>& copy) = delete;
+        WebSocketServerType<LINK>& operator=(const WebSocketServerType<LINK>& RHS) = delete;
+
+        template <typename... Args>
+        WebSocketServerType(const bool binary, const bool masking, Args&&... args)
+            : _channel(*this, binary, masking, std::forward<Args>(args)...)
+        {
+        }
+        virtual ~WebSocketServerType() = default;
 
     public:
-        WebSocketServerType(const bool binary, const bool masking)
-            : _channel(*this, binary, masking)
-        {
-        }
-        template <typename Arg1>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1)
-            : _channel(*this, binary, masking, arg1)
-        {
-        }
-        template <typename Arg1, typename Arg2>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1, Arg2 arg2)
-            : _channel(*this, binary, masking, arg1, arg2)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3)
-            : _channel(*this, binary, masking, arg1, arg2, arg3)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
-            : _channel(*this, binary, masking, arg1, arg2, arg3, arg4)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
-            : _channel(*this, binary, masking, arg1, arg2, arg3, arg4, arg5)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
-            : _channel(*this, binary, masking, arg1, arg2, arg3, arg4, arg5, arg6)
-        {
-        }
-        template <typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
-        WebSocketServerType(const bool binary, const bool masking, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
-            : _channel(*this, binary, masking, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
-        {
-        }
-        virtual ~WebSocketServerType()
-        {
-        }
-
-    public:
-        inline LINK& Link()
+        LINK& Link()
         {
             return (_channel.Link());
         }
-        inline const LINK& Link() const
+        const LINK& Link() const
         {
             return (_channel.Link());
         }
-        inline bool IsOpen() const
+        bool IsOpen() const
         {
             return (_channel.IsOpen() && _channel.IsWebSocket());
         }
-        inline bool IsClosed() const
+        bool IsClosed() const
         {
             return (_channel.IsClosed());
         }
-        inline bool IsWebServer() const
+        bool IsWebServer() const
         {
             return (_channel.IsWebServer());
         }
-        inline bool IsWebSocket() const
+        bool IsWebSocket() const
         {
             return (_channel.IsWebSocket());
         }
-        inline bool IsUpgrading() const
+        bool IsUpgrading() const
         {
             return (_channel.IsUpgrading());
         }
-        inline bool IsSuspended() const
+        bool IsSuspended() const
         {
             return (_channel.IsSuspended());
         }
-        inline bool IsCompleted() const
+        bool IsCompleted() const
         {
             return (_channel.IsCompleted());
         }
-        inline void Binary(const bool binary)
+        void Binary(const bool binary)
         {
             _channel.Binary(binary);
         }
-        inline bool Binary() const
+        bool Binary() const
         {
             return (_channel.Binary());
         }
-        inline void Masking(const bool masking)
+        void Masking(const bool masking)
         {
             _channel.Masking(masking);
         }
-        inline bool Masking() const
+        bool Masking() const
         {
             return (_channel.Masking());
         }
-        inline uint32_t Open(const uint32_t waitTime)
+        uint32_t Open(const uint32_t waitTime)
         {
             return (_channel.Open(waitTime));
         }
-        inline uint32_t Close(const uint32_t waitTime)
+        uint32_t Close(const uint32_t waitTime)
         {
             return (_channel.Close(waitTime));
         }
-        inline void Trigger()
+        void Trigger()
         {
             _channel.Trigger();
         }
-        inline string LocalId() const
+        string LocalId() const
         {
             return (_channel.LocalId());
         }
-        inline void Ping()
+        void Ping()
         {
             _channel.Ping();
         }
@@ -1809,6 +1435,4 @@ namespace Web {
         Handler<LINK> _channel;
     };
 }
-} // namespace WPEFramework.HTTP
-
-#endif
+} // namespace WPEFramework.Web

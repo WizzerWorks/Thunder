@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,9 +56,9 @@ namespace Core {
         mbstate_t result;
         return (::wcsrtombs(converted, &character, wcwidth(*character), &result));
 #else
-#pragma warning(disable : 4996)
+PUSH_WARNING(DISABLE_WARNING_DEPRECATED_USE)
         return (::wctomb(converted, character[0]));
-#pragma warning(default : 4996)
+POP_WARNING()
 #endif
 #endif
     }
@@ -255,15 +255,31 @@ namespace Core {
     //------------------------------------------------------------------------
     // Serialize: binary buffer
     //------------------------------------------------------------------------
-    void EXTERNAL ToHexString(const uint8_t object[], const uint16_t length, string& result);
-    uint16_t EXTERNAL FromHexString(const string& hexString, uint8_t* object, const uint16_t maxLength);
+    void EXTERNAL ToHexString(const uint8_t object[], const uint32_t length, string& result, const TCHAR delimiter = '\0');
+    uint32_t EXTERNAL FromHexString(const string& hexString, uint8_t* object, const uint32_t maxLength, const TCHAR delimiter = '\0');
 
     //------------------------------------------------------------------------
     // Serialize: Base64
     //------------------------------------------------------------------------
-    void EXTERNAL ToString(const uint8_t object[], const uint16_t length, const bool padding, string& result);
-
+    void EXTERNAL ToString(const uint8_t object[], const uint32_t length, const bool padding, string& result);
     uint16_t EXTERNAL FromString(const string& newValue, uint8_t object[], uint16_t& length, const TCHAR* ignoreList = nullptr);
+    uint32_t EXTERNAL FromString(const string& newValue, uint8_t object[], uint32_t& length, const TCHAR* ignoreList = nullptr);
+
+    //------------------------------------------------------------------------
+    // Codepoint: Operations to extract and convert code points.
+    //------------------------------------------------------------------------
+
+    // If false is returned, the conversion could not take place, in stead the result will indicate the codepoint 
+    // of SPACE.
+    bool EXTERNAL CodePointToUTF16(const uint32_t codePoint, uint16_t& lowPart, uint16_t& highPart);
+    bool EXTERNAL UTF16ToCodePoint(const uint16_t lowPart, const uint16_t highPart, uint32_t& codePoint);
+
+    // Negative return value indicates the length added but during the conversion something failed. It s not a
+    // valid code point or UTF8/16 sata stream.
+    int8_t EXTERNAL ToCodePoint(const TCHAR* data, const uint8_t length, uint32_t& codePoint);
+    int8_t EXTERNAL FromCodePoint(uint32_t codePoint, TCHAR* data, const uint8_t length);
+
+    string EXTERNAL ToQuotedString(const TCHAR quote, const string& input);
 
     namespace Serialize {
         template <typename TEXTTERMINATOR, typename HANDLER>

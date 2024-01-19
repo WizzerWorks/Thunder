@@ -1,7 +1,7 @@
 # If not stated otherwise in this file or this component's license file the
 # following copyright and licenses apply:
 #
-# Copyright 2020 RDK Management
+# Copyright 2020 Metrological
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,14 +27,28 @@ set(VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH})
 
 message(STATUS "Setting up ${PROJECT_NAME} v${VERSION}")
 
+option(HIDE_NON_EXTERNAL_SYMBOLS
+    "Hide all non EXTERNAL tagged symbols" ON)
+option(ENABLE_STRICT_COMPILER_SETTINGS
+    "Enable compiler flags to get the warnings/errors due to improper condition in the code" OFF) 
+option(LEGACY_CONFIG_GENERATOR
+    "Use the legacy config generator and all its needed CMake sub-components. 
+     If switched OFF, plugins need to use the new python-based templates. (*.conf.in)" OFF) 
+
 if (BUILD_REFERENCE)
     add_definitions (-DBUILD_REFERENCE=${BUILD_REFERENCE})
 endif()
 
 list(APPEND CMAKE_MODULE_PATH
-    "${CMAKE_SOURCE_DIR}/cmake"
-    "${CMAKE_SOURCE_DIR}/cmake/common"
-    "${CMAKE_SOURCE_DIR}/cmake/modules")
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/common"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules"
+    "${CMAKE_SYSROOT}${CMAKE_INSTALL_PREFIX}/include/${PROJECT_NAME}/Modules")
+
+if (TOOLS_SYSROOT)
+    list(APPEND CMAKE_MODULE_PATH
+        "${TOOLS_SYSROOT}${CMAKE_INSTALL_PREFIX}/include/${PROJECT_NAME}/Modules")
+endif()
 
 include(platform)
 include(CmakeHelperFunctions)
@@ -42,20 +56,41 @@ include(CmakeHelperFunctions)
 set(PLATFORM "PC_UNIX" CACHE STRING
         "Defines on what platform the application will run")
 
-option(INSTALL_LOCALLY "Install this project locally" OFF)
-
 set(NAMESPACE ${PROJECT_NAME} CACHE STRING "Namespace of the project")
 
 find_package(ProxyStubGenerator REQUIRED)
 find_package(JsonGenerator REQUIRED)
+find_package(ConfigGenerator REQUIRED)
 
-if (INSTALL_LOCALLY)
-    set(CMAKE_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/install")
-    set(CMAKE_PREFIX_PATH "${PROJECT_BINARY_DIR}/cmake")
+if(NOT DEFINED BUILD_SHARED_LIBS)
+    set(BUILD_SHARED_LIBS ON CACHE INTERNAL "Enable shared objects by default") 
+    message(STATUS "BUILD_SHARED_LIBS was not set, assuming ${BUILD_SHARED_LIBS}")
 endif()
 
+#
+# Build type specific options
+#
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE MinSizeRel)
+    message(AUTHOR_WARNING "CMAKE_BUILD_TYPE not set, assuming '${CMAKE_BUILD_TYPE}'")
+endif()
+
+message(STATUS "CMake build type: '${CMAKE_BUILD_TYPE}'")
+
+# Remove optimization flags added by the build system
+string(REGEX REPLACE "(-g[0123])" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REGEX REPLACE "(-g[0123])" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+string(REGEX REPLACE "\\-\\g$" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REGEX REPLACE "\\-\\g$" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+# FIX_ME: Disable fortify source.
+#         https://jira.rdkcentral.com/jira/browse/METROL-483
+#         Enabled in upstream buildroot, generates a lot of warnings, caused by missing optimalisation flags.
+#         https://www.redhat.com/en/blog/enhance-application-security-fortifysource
+string(REGEX REPLACE "-D_FORTIFY_SOURCE=[0-3]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REGEX REPLACE "-D_FORTIFY_SOURCE=[0-3]" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+
 # make sure others can make use of the JSON creation tools as well!!!
-configure_file( "${CMAKE_SOURCE_DIR}/cmake/project.cmake.in"
+configure_file( "${CMAKE_CURRENT_SOURCE_DIR}/cmake/project.cmake.in"
                 "${CMAKE_CURRENT_BINARY_DIR}/${NAMESPACE}.cmake"
                 @ONLY)
 
@@ -63,10 +98,15 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${NAMESPACE}.cmake"
         RENAME "${NAMESPACE}Config.cmake"
         DESTINATION lib/cmake/${NAMESPACE})
 
+if(CMAKE_VERSION VERSION_LESS 3.20.0 AND LEGACY_CONFIG_GENERATOR)
 install(DIRECTORY
-            "${CMAKE_SOURCE_DIR}/cmake/common"
-            "${CMAKE_SOURCE_DIR}/cmake/config"
-            "${CMAKE_SOURCE_DIR}/cmake/templates"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/config"
+    DESTINATION lib/cmake/${NAMESPACE})
+endif(CMAKE_VERSION VERSION_LESS 3.20.0 AND LEGACY_CONFIG_GENERATOR)
+
+install(DIRECTORY
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/common"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/templates"
         DESTINATION lib/cmake/${NAMESPACE})
 
 if(APPLE)
@@ -92,7 +132,9 @@ endif()
 
 if(BUILD_TESTS)
   enable_testing()
-  add_subdirectory(Tests/unit)
 endif()
 
 add_subdirectory(Source)
+
+add_subdirectory(Tests)
+

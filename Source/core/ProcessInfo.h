@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -107,10 +107,10 @@ namespace Core {
             Iterator(const string& parentname, const string& childname, const bool removepath);
 
             // Get the Child Processes with a name name from a Parent pid
-            Iterator(const uint32_t parentPID, const string& childname, const bool removepath);
+            Iterator(const process_t parentPID, const string& childname, const bool removepath);
 
             // Get the Children of the given PID.
-            Iterator(const uint32_t parentPID);
+            Iterator(const process_t parentPID);
 
             Iterator(const Iterator& copy)
                 : _pids(copy._pids)
@@ -315,9 +315,6 @@ namespace Core {
         }
 #endif
         uint64_t Allocated() const;
-        /**
-         * @brief On Linux, MemoryStats() is called inside those 2 methods, no need to call it beforehand
-         */
         uint64_t Resident() const;
         uint64_t Shared() const;
 
@@ -369,6 +366,9 @@ namespace Core {
         uint32_t User(const string& userName);
         string Group() const;
         uint32_t Group(const string& groupName);
+
+    private:
+        void SupplementryGroups(const string& userName);
     };
 
     class EXTERNAL ProcessTree {

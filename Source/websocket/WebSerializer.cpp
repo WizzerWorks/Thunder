@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -311,6 +311,7 @@ ENUM_CONVERSION_END(Crypto::EnumHashType)
 ENUM_CONVERSION_BEGIN(Web::Authorization::type)
 
     { Web::Authorization::BEARER, _TXT("Bearer") },
+    { Web::Authorization::BASIC, _TXT("Basic") },
 
 ENUM_CONVERSION_END(Web::Authorization::type)
 
@@ -358,8 +359,17 @@ namespace Web
         return (Core::EnumerateType<type>(value).Data());
     }
 
+    bool EndsWithCaseInsensitive(const string& mainStr, const string& toMatch)
+    {
+        auto it = toMatch.begin();
+        return mainStr.size() >= toMatch.size() &&
+                std::all_of(std::next(mainStr.begin(),mainStr.size() - toMatch.size()), mainStr.end(), [&it](const char & character) {
+                    return ::tolower(character) == *(it++);
+                });
+    }
+
     // Find the correct file to serve
-    bool MIMETypeForFile(const string path, string& fileToService, MIMETypes& mimeType)
+    bool MIMETypeAndEncodingForFile(const string path, string& fileToService, MIMETypes& mimeType, EncodingTypes& encoding)
     {
         mimeType = Web::MIME_UNKNOWN;
         bool filePresent = false;
@@ -379,26 +389,21 @@ namespace Web
         }
 
         if (filePresent == true) {
-            int position = static_cast<int>(fileToService.rfind('.', -1));
-
+            string fileName = fileToService;
+            int position = static_cast<int>(fileName.rfind('.', -1));
+            if (EndsWithCaseInsensitive(fileName, ".gz")) {
+                encoding = EncodingTypes::ENCODING_GZIP;
+                fileName.resize(fileName.size() - 3);
+                position = static_cast<int>(fileName.rfind('.', -1));
+            }
             // See if we have an extension to go on..
             if (position != -1) {
                 uint16_t index = 0;
-                uint16_t length = static_cast<uint16_t>(fileToService.length()) - (++position);
 
                 // Seems we have an extension, what is it
                 while ((mimeType == Web::MIME_UNKNOWN) && (index < (sizeof(extensionLookupTable) / sizeof(FileExtensionTable)))) {
-                    // Miimum should be the same length...
-                    if (extensionLookupTable[index].length == length) {
-                        uint16_t item = 0;
-
-                        while ((item < length) && (tolower(fileToService[position + item]) == extensionLookupTable[index].fileExtension[item])) {
-                            item++;
-                        }
-
-                        if (item == length) {
-                            mimeType = extensionLookupTable[index].type;
-                        }
+                    if (EndsWithCaseInsensitive(fileName, extensionLookupTable[index].fileExtension)) {
+                        mimeType = extensionLookupTable[index].type;
                     }
 
                     index++;
@@ -722,7 +727,7 @@ namespace Web
                         } else if ((_keyIndex <= 10) && (_current->WebSocketProtocol.IsSet() == true)) {
                             _keyIndex = 11;
                             _buffer = (_current->Mode() == MARSHAL_UPPERCASE ? __WEBSOCKET_PROTOCOL : _T("Sec-WebSocket-Protocol:"));
-                            _value = _current->WebSocketProtocol.Value();
+                            _value = _current->WebSocketProtocol.Value().All();
                             _offset = 0;
                         } else if ((_keyIndex <= 11) && (_current->WebSocketVersion.IsSet() == true)) {
                             _keyIndex = 12;
@@ -1469,7 +1474,7 @@ namespace Web
                 _current->Origin = buffer;
                 break;
             case Request::WEBSOCKET_PROTOCOL:
-                _current->WebSocketProtocol = buffer;
+                _current->WebSocketProtocol = ProtocolsArray(buffer);
                 break;
             case Request::WEBSOCKET_KEY:
                 _current->WebSocketKey = buffer;
@@ -1585,7 +1590,7 @@ namespace Web
             break;
         }
         case CHUNK_INIT: {
-            uint32_t chunkedSize = Core::NumberType<uint32_t>(Core::TextFragment(buffer));
+            uint32_t chunkedSize = Core::NumberType<uint32_t, false, BASE_HEXADECIMAL>(Core::TextFragment(buffer));
             if (chunkedSize == 0) {
                 _state = BODY_END;
                 _parser.FlushLine();
@@ -1669,6 +1674,9 @@ namespace Web
             _current = nullptr;
             _parser.CollectWord(Parser::UPPERCASE);
             _state = VERB;
+            break;
+        }
+        case CHUNK_INIT: {
             break;
         }
         default: {

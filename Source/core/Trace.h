@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,15 +45,50 @@ namespace WPEFramework {
 
 #ifdef __WINDOWS__
 #define TRACE_PROCESS_ID ::GetCurrentProcessId()
+#define TRACE_THREAD_ID ::GetCurrentThreadId()
 #else
 #define TRACE_PROCESS_ID ::getpid()
+#if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
+#include <sys/syscall.h>
+#define TRACE_THREAD_ID syscall(SYS_gettid)
+#else
+#include <unistd.h>
+#if INTPTR_MAX == INT64_MAX
+#define TRACE_THREAD_ID static_cast<uint64_t>(::gettid())
+#else
+#define TRACE_THREAD_ID static_cast<uint32_t>(::gettid())
+#endif
+#endif
 #endif
 
-#define TRACE_FORMATTING_IMPL(fmt, ...)                                                                            \
-    do {                                                                                                                                  \
-        fprintf(stderr, "\033[1;32m[%s:%d](%s)<%d>" fmt "\n\033[0m", &__FILE__[WPEFramework::Core::FileNameOffset(__FILE__)], __LINE__, __FUNCTION__, TRACE_PROCESS_ID, ##__VA_ARGS__);  \
-        fflush(stderr);                                                                                                                   \
+#if defined(__GNUC__)
+    #pragma GCC system_header
+#elif defined(__clang__)
+    #pragma clang system_header
+#endif
+
+#ifdef __WINDOWS__
+#define TRACE_FORMATTING_IMPL(fmt, ...)                                                                                                     \
+    do {                                                                                                                                    \
+        ::fprintf(stderr, "\033[1;32m[%s:%d](%s)<PID:%d><TID:%d>" fmt "\033[0m\n", &__FILE__[WPEFramework::Core::FileNameOffset(__FILE__)], __LINE__, __FUNCTION__, TRACE_PROCESS_ID, TRACE_THREAD_ID, ##__VA_ARGS__);  \
+        fflush(stderr);                                                                                                                 \
     } while (0)
+#else
+#if INTPTR_MAX == INT64_MAX
+#define TRACE_FORMATTING_IMPL(fmt, ...)                                                                                                     \
+    do {                                                                                                                                    \
+        ::fprintf(stderr, "\033[1;32m[%s:%d](%s)<PID:%d><TID:%ld>" fmt "\033[0m\n", &__FILE__[WPEFramework::Core::FileNameOffset(__FILE__)], __LINE__, __FUNCTION__, TRACE_PROCESS_ID, TRACE_THREAD_ID, ##__VA_ARGS__);  \
+        fflush(stderr);                                                                                                                     \
+    } while (0)
+#else
+#define TRACE_FORMATTING_IMPL(fmt, ...)                                                                                                     \
+    do {                                                                                                                                    \
+        ::fprintf(stderr, "\033[1;32m[%s:%d](%s)<PID:%d><TID:%d>" fmt "\033[0m\n", &__FILE__[WPEFramework::Core::FileNameOffset(__FILE__)], __LINE__, __FUNCTION__, TRACE_PROCESS_ID, TRACE_THREAD_ID, ##__VA_ARGS__);  \
+        fflush(stderr);                                                                                                                     \
+    } while (0)
+#endif
+#
+#endif
 
 #if defined(CORE_TRACE_NOT_ALLOWED) && !defined(__WINDOWS__) 
 #define TRACE_FORMATTING(fmt, ...)                                                                            \
@@ -123,9 +158,12 @@ namespace WPEFramework {
     do {                                                                                                        \
         if (!(expr)) {                                                                                          \
             ASSERT_LOGGER("===== $$ [%d]: ASSERT [%s:%d] (%s)\n", TRACE_PROCESS_ID, __FILE__, __LINE__, #expr); \
-            std::list<string> entries;                                                                          \
+            std::list<WPEFramework::Core::callstack_info> entries;                                              \
             DumpCallStack(0, entries);                                                                          \
-            for(const string& entry : entries) { fprintf(stderr, "%s", entry.c_str()); } fflush(stderr);        \
+            for(const WPEFramework::Core::callstack_info& entry : entries) {                                    \
+                fprintf(stderr, "[%s]:[%s]:[%d]\n", entry.module.c_str(), entry.function.c_str(), entry.line);  \
+            }                                                                                                   \
+            fflush(stderr);                                                                                     \
             abort();                                                                                            \
         }                                                                                                       \
     } while(0)
@@ -134,17 +172,29 @@ namespace WPEFramework {
     do {                                                                                                                                             \
         if (!(expr)) {                                                                                                                               \
             ASSERT_LOGGER("===== $$ [%d]: ASSERT [%s:%d] (%s)\n         " #format "\n", TRACE_PROCESS_ID, __FILE__, __LINE__, #expr, ##__VA_ARGS__); \
-            std::list<string> entries;                                                                                                               \
+            std::list<WPEFramework::Core::callstack_info> entries;                                                                                   \
             DumpCallStack(0, entries);                                                                                                               \
-            for(const string& entry : entries) { fprintf(stderr, "%s", entry.c_str()); } fflush(stderr);                                             \
+            for(const WPEFramework::Core::callstack_info& entry : entries) {                                                                         \
+                fprintf(stderr, "[%s]:[%s]:[%d]\n", entry.module.c_str(), entry.function.c_str(), entry.line);                                       \
+            }                                                                                                                                        \
+            fflush(stderr);                                                                                                                          \
             abort();                                                                                                                                 \
         }                                                                                                                                            \
     } while(0)
 
-#define VERIFY(x, y) assert(x == y)
+#define VERIFY(expr) ASSERT(expr)
 #else
 #define ASSERT(x)
-#define VERIFY(x, y) x
+
+#define VERIFY(expr)                                                                                                   \
+    do {                                                                                                               \
+        if(!(expr)) {                                                                                                  \
+            ASSERT_LOGGER("===== $$ [%d]: VERIFY FAILED [%s:%d] (%s)\n", TRACE_PROCESS_ID, __FILE__, __LINE__, #expr); \
+       }                                                                                                               \
+    } while(0)
+
+
+
 #define ASSERT_VERBOSE(x, y, ...)
 #endif
 
@@ -161,6 +211,7 @@ namespace WPEFramework {
 namespace Core {
     class TextFragment;
 
+    EXTERNAL TextFragment ClassName(const char className[]);
     EXTERNAL TextFragment ClassNameOnly(const char className[]);
     EXTERNAL const char* FileNameOnly(const char fileName[]);
     EXTERNAL string LogMessage(const TCHAR filename[], const uint32_t LineNumber, const TCHAR* message);

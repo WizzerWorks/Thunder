@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,97 +23,134 @@
 #include "Module.h"
 #include "PluginServer.h"
 #include "Probe.h"
-#include "json/JsonData_Controller.h"
+#include "IController.h"
+#include "PostMortem.h"
 
 namespace WPEFramework {
 namespace Plugin {
 
-    class Controller : public PluginHost::IPlugin, public PluginHost::IWeb, public PluginHost::JSONRPC {
+    PUSH_WARNING(DISABLE_WARNING_DEPRECATED_USE) // for now we must support the deprecated interface for backwards compatibility reasons 
+    class Controller
+        : public PluginHost::IPlugin
+        , public PluginHost::IWeb
+        , public PluginHost::JSONRPC
+        , public Exchange::Controller::IConfiguration
+        , public Exchange::Controller::IDiscovery
+        , public Exchange::Controller::ISystemManagement
+        , public Exchange::Controller::IMetadata
+        , public Exchange::Controller::ILifeTime
+        , public Exchange::Controller::IShells {
     private:
-        class Sink : public PluginHost::IPlugin::INotification,
-                     public PluginHost::ISubSystem::INotification {
-        private:
-            Sink() = delete;
-            Sink(const Sink&) = delete;
-            Sink& operator=(const Sink&) = delete;
+        using Resumes = std::vector<string>;
+        using ExternalSubSystems = std::vector<PluginHost::ISubSystem::subsystem>;
+        using LifeTimeNotifiers = std::vector<Exchange::Controller::ILifeTime::INotification*>;
 
-            class Job : public Core::IDispatchType<void> {
-            private:
+        class Sink 
+            : public PluginHost::IPlugin::INotification
+            , public PluginHost::ISubSystem::INotification {
+        private:
+            class Job {
+            public:
                 Job() = delete;
                 Job(const Job&) = delete;
                 Job& operator=(const Job&) = delete;
 
-            public:
-                Job(Controller* parent)
-                    : _parent(*parent)
-                    , _schedule(false)
-                {
-                    ASSERT(parent != nullptr);
-                }
-                virtual ~Job()
-                {
-                }
+                Job(Controller& parent) : _parent(parent) { }
+                ~Job() = default;
 
             public:
-                void Schedule()
-                {
-                    if (_schedule == false) {
-                        _schedule = true;
-                        Core::WorkerPool::Instance().Submit(Core::ProxyType<Core::IDispatchType<void>>(*this));
-                    }
-                }
-                virtual void Dispatch()
-                {
-                    _schedule = false;
+                void Dispatch() {
                     _parent.SubSystems();
                 }
 
             private:
                 Controller& _parent;
-                bool _schedule;
             };
 
         public:
-            Sink(Controller* parent)
-                : _parent(*parent)
-                , _decoupled(Core::ProxyType<Job>::Create(parent))
-            {
-                ASSERT(parent != nullptr);
+            Sink() = delete;
+            Sink(const Sink&) = delete;
+            Sink& operator=(const Sink&) = delete;
+
+            Sink(Controller& parent)
+                : _parent(parent)
+                , _job(parent) {
             }
-            virtual ~Sink()
-            {
-                Core::WorkerPool::Instance().Revoke(Core::ProxyType<Core::IDispatch>(_decoupled));
+            ~Sink() override {
+                _job.Revoke();
             }
 
         private:
             void Updated() override
             {
-                _decoupled->Schedule();
+                _job.Submit();
             }
             void Activated(const string& callsign, PluginHost::IShell* plugin) override
             {
-                _parent.Activated(callsign, plugin);
+                _parent.NotifyStateChange(callsign, PluginHost::IShell::ACTIVATED, plugin->Reason());
+
+                // Make sure the resumes 
+                _parent.StartupResume(callsign, plugin);
+
             }
             void Deactivated(const string& callsign, PluginHost::IShell* plugin) override
             {
-                _parent.Deactivated(callsign, plugin);
+                _parent.NotifyStateChange(callsign, PluginHost::IShell::DEACTIVATED, plugin->Reason());
+            }
+            void Unavailable(const string& callsign, PluginHost::IShell* plugin) override
+            {
+                _parent.NotifyStateChange(callsign, PluginHost::IShell::UNAVAILABLE, plugin->Reason());
             }
 
             BEGIN_INTERFACE_MAP(Sink)
-            INTERFACE_ENTRY(PluginHost::IPlugin::INotification)
+                INTERFACE_ENTRY(PluginHost::IPlugin::INotification)
             END_INTERFACE_MAP
 
         private:
             Controller& _parent;
-            Core::ProxyType<Job> _decoupled;
+            Core::WorkerPool::JobType<Job> _job;
         };
 
-        // GET -> URL /<MetaDataCallsign>/Plugin/<Callsign>
-        // PUT -> URL /<MetaDataCallsign>/Configure
-        // PUT -> URL /<MetaDataCallsign>/Activate/<Callsign>
-        // PUT -> URL /<MetaDataCallsign>/Deactivate/<Callsign>
-        // DELETE -> URL /<MetaDataCallsign>/Plugin/<Callsign>
+        // GET -> URL /<MetadataCallsign>/Plugin/<Callsign>
+        // PUT -> URL /<MetadataCallsign>/Configure
+        // PUT -> URL /<MetadataCallsign>/Activate/<Callsign>
+        // PUT -> URL /<MetadataCallsign>/Deactivate/<Callsign>
+        // DELETE -> URL /<MetadataCallsign>/Plugin/<Callsign>
     public:
+        class SubsystemsData : public Core::JSON::Container {
+        public:
+            SubsystemsData()
+                : Core::JSON::Container()
+            {
+                Init();
+            }
+
+            SubsystemsData(const SubsystemsData& other)
+                : Core::JSON::Container()
+                , Subsystem(other.Subsystem)
+                , Active(other.Active)
+            {
+                Init();
+            }
+
+            SubsystemsData& operator=(const SubsystemsData& rhs)
+            {
+                Subsystem = rhs.Subsystem;
+                Active = rhs.Active;
+                return (*this);
+            }
+
+        private:
+            void Init()
+            {
+                Add(_T("subsystem"), &Subsystem);
+                Add(_T("active"), &Active);
+            }
+
+        public:
+            Core::JSON::EnumType<PluginHost::ISubSystem::subsystem> Subsystem;
+            Core::JSON::Boolean Active;
+        };
         class Config : public Core::JSON::Container {
         private:
             Config(const Config&) = delete;
@@ -146,10 +183,12 @@ namespace Plugin {
                 , Probe()
                 , Resumes()
                 , SubSystems()
+                , Ui(true)
             {
                 Add(_T("probe"), &Probe);
                 Add(_T("resumes"), &Resumes);
                 Add(_T("subsystems"), &SubSystems);
+                Add(_T("ui"), &Ui);
             }
             ~Config()
             {
@@ -159,6 +198,7 @@ namespace Plugin {
             ProbeConfig Probe;
             Core::JSON::ArrayType<Core::JSON::String> Resumes;
             Core::JSON::ArrayType<Core::JSON::EnumType<PluginHost::ISubSystem::subsystem>> SubSystems;
+            Core::JSON::Boolean Ui;
         };
 
     private:
@@ -166,39 +206,44 @@ namespace Plugin {
         Controller& operator=(const Controller&);
 
     protected:
-        #ifdef __WINDOWS__
-        #pragma warning(disable : 4355)
-        #endif
-        Controller()
+        PUSH_WARNING(DISABLE_WARNING_THIS_IN_MEMBER_INITIALIZER_LIST)
+            Controller()
             : _adminLock()
             , _skipURL(0)
             , _webPath()
             , _pluginServer(nullptr)
             , _service(nullptr)
             , _probe(nullptr)
-            , _systemInfoReport(this)
+            , _systemInfoReport(*this)
             , _resumes()
             , _lastReported()
+            , _externalSubsystems()
+            , _lifeTimeObservers()
         {
-            RegisterAll();
         }
-        #ifdef __WINDOWS__
-        #pragma warning(default : 4355)
-        #endif
+        POP_WARNING()
 
     public:
         virtual ~Controller()
         {
-            UnregisterAll();
-            SetServer(nullptr);
+            // Attach to the SubSystems, we propagate the changes.
+            PluginHost::ISubSystem* subSystems(_service->SubSystems());
+
+            ASSERT(subSystems != nullptr);
+
+            if (subSystems != nullptr) {
+                subSystems->Unregister(&_systemInfoReport);
+                subSystems->Release();
+            }
         }
-		inline void Notification(const PluginHost::Server::ForwardMessage& message) {
-            Notify("all", message);
-		}
-           
-        inline void SetServer(PluginHost::Server* pluginServer)
+        inline void Notification(const PluginHost::Server::ForwardMessage& message)
         {
-            ASSERT((_pluginServer == nullptr) ^ (pluginServer == nullptr));
+            Notify("all", message);
+        }
+
+        inline void SetServer(PluginHost::Server* pluginServer, const std::vector<PluginHost::ISubSystem::subsystem>& externalSubsystems)
+        {
+            ASSERT((_pluginServer == nullptr) && (pluginServer != nullptr));
 
             _pluginServer = pluginServer;
 
@@ -208,11 +253,33 @@ namespace Plugin {
             ASSERT(subSystems != nullptr);
 
             if (subSystems != nullptr) {
-                if (pluginServer != nullptr) {
-                    subSystems->Register(&_systemInfoReport);
-                } else {
-                    subSystems->Unregister(&_systemInfoReport);
+                uint32_t entries = ~0;
+
+                for (const PluginHost::ISubSystem::subsystem& entry : externalSubsystems) {
+                    if (std::find(_externalSubsystems.begin(), _externalSubsystems.end(), entry) != _externalSubsystems.end()) {
+                        Core::EnumerateType<PluginHost::ISubSystem::subsystem> name(entry);
+                        SYSLOG(Logging::Startup, (Core::Format(_T("Subsystem [%s] was already signalled by plugin metadata. No need as Controller config!!!"), name.Data())));
+                    }
+                    else {
+                        _externalSubsystems.emplace_back(entry);
+                    }
                 }
+
+                // Insert the subsystems found from the Plugins configured to use..
+                for (const PluginHost::ISubSystem::subsystem& entry : _externalSubsystems) {
+                    entries &= ~(1 << entry);
+                }
+
+                uint8_t setFlag = 0;
+                while (setFlag < PluginHost::ISubSystem::END_LIST) {
+                    if ((entries & (1 << setFlag)) != 0) {
+                        TRACE_L1("Setting the default SubSystem: %d", setFlag);
+                        subSystems->Set(static_cast<PluginHost::ISubSystem::subsystem>(setFlag), nullptr);
+                    }
+                    setFlag++;
+                }
+
+                subSystems->Register(&_systemInfoReport);
                 subSystems->Release();
             }
         }
@@ -231,94 +298,107 @@ namespace Plugin {
         // If there is an error, return a string describing the issue why the initialisation failed.
         // The Service object is *NOT* reference counted, lifetime ends if the plugin is deactivated.
         // The lifetime of the Service object is guaranteed till the deinitialize method is called.
-        virtual const string Initialize(PluginHost::IShell* service) override;
+        const string Initialize(PluginHost::IShell* service) override;
 
         // The plugin is unloaded from the webbridge. This is call allows the module to notify clients
         // or to persist information if needed. After this call the plugin will unlink from the service path
         // and be deactivated. The Service object is the same as passed in during the Initialize.
         // After theis call, the lifetime of the Service object ends.
-        virtual void Deinitialize(PluginHost::IShell* service) override;
+        void Deinitialize(PluginHost::IShell* service) override;
 
         // Returns an interface to a JSON struct that can be used to return specific metadata information with respect
         // to this plugin. This Metadata can be used by the MetData plugin to publish this information to the ouside world.
-        virtual string Information() const override;
+        string Information() const override;
 
         //  IWeb methods
         // -------------------------------------------------------------------------------------------------------
         // Whenever a request is received, it might carry some additional data in the body. This method allows
         // the plugin to attach a deserializable data object (ref counted) to be loaded with any potential found
         // in the body of the request.
-        virtual void Inbound(Web::Request& request) override;
+        void Inbound(Web::Request& request) override;
 
         // If everything is received correctly, the request is passed to us, on a thread from the thread pool, to
         // do our thing and to return the result in the response object. Here the actual specific module work,
         // based on a a request is handled.
-        virtual Core::ProxyType<Web::Response> Process(const Web::Request& request) override;
+        Core::ProxyType<Web::Response> Process(const Web::Request& request) override;
+
+        //  Controller methods
+        // -------------------------------------------------------------------------------------------------------
+        Core::hresult Delete(const string& path) override;
+        Core::hresult Reboot() override;
+        Core::hresult Environment(const string& variable, string& value) const override;
+        Core::hresult Clone(const string& callsign, const string& newcallsign, string& response) override;
+
+        Core::hresult StartDiscovery(const uint8_t ttl) override;
+        Core::hresult DiscoveryResults(IDiscovery::Data::IDiscoveryResultsIterator*& results) const override;
+
+        Core::hresult Persist() override;
+        Core::hresult Configuration(const string& callsign, string& configuration) const override;
+        Core::hresult Configuration(const string& callsign, const string& configuration) override;
+
+        Core::hresult Register(Exchange::Controller::ILifeTime::INotification* notification) override;
+        Core::hresult Unregister(Exchange::Controller::ILifeTime::INotification* notification) override;
+
+        Core::hresult Activate(const string& callsign) override;
+        Core::hresult Deactivate(const string& callsign) override;
+        Core::hresult Unavailable(const string& callsign) override;
+        Core::hresult Suspend(const string& callsign) override;
+        Core::hresult Resume(const string& callsign) override;
+        Core::hresult Hibernate(const string& callsign, const uint32_t timeout);
+
+        // IMetadata overrides
+        Core::hresult Links(IMetadata::Data::ILinksIterator*& links) const override;
+        Core::hresult Proxies(const uint32_t linkId, IMetadata::Data::IProxiesIterator*& proxies) const override;
+        Core::hresult Services(const string& callsign, IMetadata::Data::IServicesIterator*& services) const override;
+        Core::hresult CallStack(const uint8_t threadId, IMetadata::Data::ICallStackIterator*& callstack) const override;
+        Core::hresult Threads(IMetadata::Data::IThreadsIterator*& threads) const override;
+        Core::hresult PendingRequests(IMetadata::Data::IPendingRequestsIterator*& requests) const override;
+        Core::hresult Subsystems(IMetadata::Data::ISubsystemsIterator*& subsystems) const override;
+        Core::hresult Version(IMetadata::Data::Version& version) const override;
+
+        // Pushing notifications to interested sinks
+        Core::hresult Register(Exchange::Controller::IShells::INotification* sink) override;
+        Core::hresult Unregister(Exchange::Controller::IShells::INotification* sink) override;
 
         //  IUnknown methods
         // -------------------------------------------------------------------------------------------------------
         BEGIN_INTERFACE_MAP(Controller)
-        INTERFACE_ENTRY(PluginHost::IPlugin)
-        INTERFACE_ENTRY(PluginHost::IWeb)
-        INTERFACE_ENTRY(PluginHost::IDispatcher)
+            INTERFACE_ENTRY(PluginHost::IPlugin)
+            INTERFACE_ENTRY(PluginHost::IWeb)
+            INTERFACE_ENTRY(PluginHost::IDispatcher)
+            INTERFACE_ENTRY(Exchange::Controller::IConfiguration)
+            INTERFACE_ENTRY(Exchange::Controller::IDiscovery)
+            INTERFACE_ENTRY(Exchange::Controller::ISystemManagement)
+            INTERFACE_ENTRY(Exchange::Controller::IMetadata)
+            INTERFACE_ENTRY(Exchange::Controller::ILifeTime)
+            INTERFACE_ENTRY(Exchange::Controller::IShells)
         END_INTERFACE_MAP
 
     private:
-        //  IDispatch methods
+        //  ILocalDispatcher methods
         // -------------------------------------------------------------------------------------------------------
-        Core::ProxyType<Core::JSONRPC::Message> Invoke(const string& token, const uint32_t channelId, const Core::JSONRPC::Message& inbound) override;
+        uint32_t Invoke(const uint32_t channelId, const uint32_t id, const string& token, const string& method, const string& parameters, string& response /* @out */) override;
 
-        inline Core::ProxyType<PluginHost::Server::Service> FromIdentifier(const string& callsign) const
+        inline Core::ProxyType<PluginHost::IShell> FromIdentifier(const string& callsign) const
         {
-            Core::ProxyType<PluginHost::Server::Service> service;
+            Core::ProxyType<PluginHost::IShell> service;
 
             _pluginServer->Services().FromIdentifier(callsign, service);
 
             return (service);
         }
-		void WorkerPoolMetaData(PluginHost::MetaData::Server& data) const
-		{
-            const Core::WorkerPool::Metadata& snapshot = Core::WorkerPool::Instance().Snapshot();
-
-            data.PendingRequests = snapshot.Pending;
-            data.PoolOccupation = snapshot.Occupation;
-
-            for (uint8_t teller = 0; teller < snapshot.Slots; teller++) {
-                // Example of why copy-constructor and assignment constructor should be equal...
-                Core::JSON::DecUInt32 newElement;
-                newElement = snapshot.Slot[teller];
-                data.ThreadPoolRuns.Add(newElement);
-            }
-		}
+        void WorkerPoolMetadata(PluginHost::Metadata::Server& data) const {
+            _pluginServer->WorkerPool().Snapshot(data);
+        }
+        void Callstack(const ThreadId id, Core::JSON::ArrayType<PluginHost::CallstackData>& response) const;
         void SubSystems();
-        void SubSystems(Core::JSON::ArrayType<Core::JSON::EnumType<PluginHost::ISubSystem::subsystem>>::ConstIterator& index);
+        uint32_t Clone(const string& basecallsign, const string& newcallsign);
+        void Proxies(Core::JSON::ArrayType<PluginHost::Metadata::COMRPC>& info) const;
         Core::ProxyType<Web::Response> GetMethod(Core::TextSegmentIterator& index) const;
         Core::ProxyType<Web::Response> PutMethod(Core::TextSegmentIterator& index, const Web::Request& request);
         Core::ProxyType<Web::Response> DeleteMethod(Core::TextSegmentIterator& index, const Web::Request& request);
-        void Activated(const string& callsign, PluginHost::IShell* plugin);
-        void Deactivated(const string& callsign, PluginHost::IShell* plugin);
-
-        void RegisterAll();
-        void UnregisterAll();
-        uint32_t endpoint_suspend(const JsonData::Controller::ActivateParamsInfo& params);
-        uint32_t endpoint_resume(const JsonData::Controller::ActivateParamsInfo& params);
-        uint32_t endpoint_activate(const JsonData::Controller::ActivateParamsInfo& params);
-        uint32_t endpoint_clone(const JsonData::Controller::CloneParamsInfo& params, Core::JSON::String& response);
-        uint32_t endpoint_deactivate(const JsonData::Controller::ActivateParamsInfo& params);
-        uint32_t endpoint_startdiscovery(const JsonData::Controller::StartdiscoveryParamsData& params);
-        uint32_t endpoint_storeconfig();
-        uint32_t endpoint_delete(const JsonData::Controller::DeleteParamsData& params);
-        uint32_t endpoint_harakiri();
-        uint32_t get_status(const string& index, Core::JSON::ArrayType<PluginHost::MetaData::Service>& response) const;
-        uint32_t get_links(Core::JSON::ArrayType<PluginHost::MetaData::Channel>& response) const;
-        uint32_t get_processinfo(PluginHost::MetaData::Server& response) const;
-        uint32_t get_subsystems(Core::JSON::ArrayType<JsonData::Controller::SubsystemsParamsData>& response) const;
-        uint32_t get_discoveryresults(Core::JSON::ArrayType<PluginHost::MetaData::Bridge>& response) const;
-        uint32_t get_environment(const string& index, Core::JSON::String& response) const;
-        uint32_t get_configuration(const string& index, Core::JSON::String& response) const;
-        uint32_t set_configuration(const string& index, const Core::JSON::String& params);
-        void event_all(const string& callsign, const Core::JSON::String& data);
-        void event_statechange(const string& callsign, const PluginHost::IShell::state& state, const PluginHost::IShell::reason& reason);
+        void StartupResume(const string& callsign, PluginHost::IShell* plugin);
+        void NotifyStateChange(const string& callsign, const PluginHost::IShell::state& state, const PluginHost::IShell::reason& reason);
 
     private:
         Core::CriticalSection _adminLock;
@@ -327,10 +407,14 @@ namespace Plugin {
         PluginHost::Server* _pluginServer;
         PluginHost::IShell* _service;
         Probe* _probe;
-        Core::Sink<Sink> _systemInfoReport;
-        std::list<string> _resumes;
+        Core::SinkType<Sink> _systemInfoReport;
+        Resumes _resumes;
         uint32_t _lastReported;
+        ExternalSubSystems _externalSubsystems;
+        LifeTimeNotifiers _lifeTimeObservers;
     };
+
+    POP_WARNING()
 }
 }
 

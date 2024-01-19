@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ namespace Tests {
     public:
         Core::ProxyType<Core::JSON::IElement> Element(const string&)
         {
-            return (Core::proxy_cast<Core::JSON::IElement>(Core::ProxyPoolType<Command>::Element()));
+            return (Core::ProxyType<Core::JSON::IElement>(Core::ProxyPoolType<Command>::Element()));
         }
     };
 
@@ -249,7 +249,7 @@ namespace Tests {
             JSONConnector<Core::JSON::IElement> jsonSocketClient(Core::NodeId(connector.c_str()));
             jsonSocketClient.Open(Core::infinite);
             testAdmin.Sync("client open");
-            jsonSocketClient.Submit(Core::proxy_cast<Core::JSON::IElement>(sendObject));
+            jsonSocketClient.Submit(Core::ProxyType<Core::JSON::IElement>(sendObject));
             jsonSocketClient.Wait();
             string received;
             jsonSocketClient.Retrieve(received);

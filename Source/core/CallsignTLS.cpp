@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,21 +20,25 @@
 #include "CallsignTLS.h"
 #include "Thread.h"
 
+#if defined(__CORE_WARNING_REPORTING__) || defined(__CORE_EXCEPTION_CATCHING__)
+
 namespace WPEFramework {
 namespace Core {
 
-    const char* CallsignTLS::Callsign() {
+    const TCHAR* CallsignTLS::Callsign() {
 
         Core::ThreadLocalStorageType<CallsignTLS>& instance = Core::ThreadLocalStorageType<CallsignTLS>::Instance();
-        const char* name = nullptr;
+        const TCHAR* name = nullptr;
         if( ( instance.IsSet() == true ) && ( instance.Context().Name() != nullptr ) ) {
             name = instance.Context().Name(); // should be safe, nobody should for this thread be able to change this while we are using it 
         }
         return name;
     }
 
-    void CallsignTLS::Callsign(const char* callsign) {
+    void CallsignTLS::Callsign(const TCHAR* callsign) {
         Core::ThreadLocalStorageType<CallsignTLS>::Instance().Context().Name(callsign);
     }
 }
 } 
+
+#endif // defined(__CORE_WARNING_REPORTING__) || defined(__CORE_EXCEPTION_CATCHING__)

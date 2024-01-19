@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,11 @@
  * limitations under the License.
  */
 
-#ifndef __PLUGIN_FRAMEWORK_SUPPORT_H
-#define __PLUGIN_FRAMEWORK_SUPPORT_H
+#pragma once
+
+#ifndef MODULE_NAME
+#error "Please define a MODULE_NAME that describes the binary/library you are building."
+#endif
 
 // Since this header is included, the code using it is external to Thunder core.
 // So therefore it should use the correct Tracing functionality and not TRACE_L# (which are just fancy printfs).
@@ -28,20 +31,23 @@
 #include "Config.h"
 #include "Channel.h"
 #include "Configuration.h"
+#include "IController.h"
 #include "IPlugin.h"
 #include "IShell.h"
 #include "IStateControl.h"
 #include "ISubSystem.h"
+#include "IVirtualInput.h"
 #include "JSONRPC.h"
+#include "Metadata.h"
 #include "Request.h"
 #include "Service.h"
+#include "Shell.h"
+#include "StateControl.h"
+#include "SubSystem.h"
 #include "System.h"
 #include "Types.h"
 #include "VirtualInput.h"
-#include "IVirtualInput.h"
 
 #ifdef __WINDOWS__
 #pragma comment(lib, "plugins.lib")
 #endif
-
-#endif // __PLUGIN_FRAMEWORK_SUPPORT_H

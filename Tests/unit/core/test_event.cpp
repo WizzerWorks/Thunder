@@ -2,7 +2,7 @@
  * If not stated otherwise in this file or this component's LICENSE file the
  * following copyright and licenses apply:
  *
- * Copyright 2020 RDK Management
+ * Copyright 2020 Metrological
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ TEST(test_event, unlock_event)
     object.Stop();
 }
 
-TEST(DISABLE_test_event, set_event)
+TEST(DISABLED_test_event, set_event)
 {
     Event event(false,true);
     std::thread::id parentTid;
